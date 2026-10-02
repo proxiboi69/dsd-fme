@@ -723,6 +723,87 @@ dmr_xcmp_class (uint16_t op)
   }
 }
 
+//RadioStatus condition -> name
+static const char *
+dmr_rcmp_status_cond (uint8_t c)
+{
+  switch (c)
+  {
+    case 2:  return "RSSI";
+    case 3:  return "BatteryValue";
+    case 4:  return "LowBattery";
+    case 5:  return "PowerUpStatus";
+    case 7:  return "ModelNumber";
+    case 8:  return "SerialNumber";
+    case 9:  return "ESN";
+    case 14: return "RadioID";
+    case 15: return "RadioAlias";
+    case 23: return "PrivacyType";
+    case 24: return "BluetoothAddress";
+    case 80: return "SMADate";
+    case 81: return "WarrantyDate";
+    default: return NULL;
+  }
+}
+
+//VersionInfo type -> name
+static const char *
+dmr_rcmp_ver_type (uint8_t t)
+{
+  switch (t)
+  {
+    case 0:   return "HostSoftware";
+    case 16:  return "DspSoftware";
+    case 48:  return "FlashBoot";
+    case 64:  return "Tune";
+    case 65:  return "Security";
+    case 66:  return "Codeplug";
+    case 75:  return "CodeplugSession";
+    case 82:  return "Kernel";
+    case 109: return "FlashSize";
+    default:  return NULL;
+  }
+}
+
+//decode known message fields into out ("" if none). msg = opcode at [0], fields after the 2-byte opcode
+static void
+dmr_xcmp_fields (char * out, size_t cap, uint16_t op, const uint8_t * msg, uint16_t mlen)
+{
+  out[0] = 0;
+  if (mlen < 3) return;
+  const uint8_t * f = msg + 2;
+  uint16_t n = mlen - 2;
+  uint8_t reply = (op & 0x8000) != 0;
+  switch (op & 0x0FFF)
+  {
+    case 0x00e: //RadioStatus: req [cond]; reply [result][cond]
+    {
+      uint8_t c;
+      if (reply) { if (n < 2) break; c = f[1]; } else c = f[0];
+      const char * s = dmr_rcmp_status_cond (c);
+      if (s) snprintf (out, cap, " cond=%s", s); else snprintf (out, cap, " cond=%u", c);
+      break;
+    }
+    case 0x00f: //VersionInfo: req [type]
+      if (!reply)
+      {
+        const char * v = dmr_rcmp_ver_type (f[0]);
+        if (v) snprintf (out, cap, " type=%s", v); else snprintf (out, cap, " type=%u", f[0]);
+      }
+      break;
+    case 0x201: case 0x202: //Read/WriteMemory: [addr u32][count u16]
+      if (n >= 6)
+        snprintf (out, cap, " addr=%08X count=%u",
+                  ((uint32_t)f[0]<<24)|((uint32_t)f[1]<<16)|(f[2]<<8)|f[3], (f[4]<<8)|f[5]);
+      break;
+    case 0x100: case 0x101: //Read/WriteIshItem: [part][type u16][id u16][nbytes u16][off u16][isize u16]
+      if (n >= 11)
+        snprintf (out, cap, " part=%u type=%04X id=%04X nbytes=%u off=%u isize=%u",
+                  f[0], (f[1]<<8)|f[2], (f[3]<<8)|f[4], (f[5]<<8)|f[6], (f[7]<<8)|f[8], (f[9]<<8)|f[10]);
+      break;
+  }
+}
+
 //control PDU opcode (BE16 at offset 0): XNL transport (XCMP inside DataMessage), else XCMP
 void dmr_xnl (dsd_opts * opts, dsd_state * state, uint16_t len, uint32_t source, uint32_t dest, uint8_t * DMR_PDU)
 {
@@ -734,13 +815,14 @@ void dmr_xnl (dsd_opts * opts, dsd_state * state, uint16_t len, uint32_t source,
   char hex[81]; uint16_t n = len > 40 ? 40 : len;
   for (uint16_t i = 0; i < n; i++) sprintf (hex + (i*2), "%02X", DMR_PDU[i]);
 
-  char label[96];
+  char label[96]; char fields[80]; fields[0] = 0;
   const char * xnl = dmr_xnl_name (op);
   if (xnl && op == 11 && len >= 4) //DataMessage carries an XCMP PDU at payload offset 0
   {
     uint16_t xop = (DMR_PDU[2] << 8) | DMR_PDU[3];
     const char * name = dmr_xcmp_name (xop & 0x0FFF);
     snprintf (label, sizeof label, "XNL DataMessage / XCMP %s %s op=%04X", name ? name : "Unknown", dmr_xcmp_class (xop), xop);
+    dmr_xcmp_fields (fields, sizeof fields, xop, DMR_PDU + 2, len - 2);
   }
   else if (xnl)
     snprintf (label, sizeof label, "XNL %s op=%04X", xnl, op);
@@ -748,10 +830,11 @@ void dmr_xnl (dsd_opts * opts, dsd_state * state, uint16_t len, uint32_t source,
   {
     const char * name = dmr_xcmp_name (op & 0x0FFF);
     snprintf (label, sizeof label, "XCMP %s %s op=%04X", name ? name : "Unknown", dmr_xcmp_class (op), op);
+    dmr_xcmp_fields (fields, sizeof fields, op, DMR_PDU, len);
   }
 
-  fprintf (stderr, "\n %s DATA=%s", label, hex);
-  sprintf (state->dmr_lrrp_gps[slot], "%s DATA=%s TGT: %u SRC: %u", label, hex, dest, source);
+  fprintf (stderr, "\n %s%s DATA=%s", label, fields, hex);
+  sprintf (state->dmr_lrrp_gps[slot], "%s%s DATA=%s TGT: %u SRC: %u", label, fields, hex, dest, source);
 }
 
 //The contents of this function are mostly trial and error
