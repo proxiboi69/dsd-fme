@@ -14,6 +14,30 @@
 
 #include "dsd.h"
 #define PCLEAR_TUNE_AWAY //disable if slower return is preferred
+
+//Motorola supplementary services (FID 0x10) by CSBK opcode; 0x24 sub-type in low octet, 0x20 ack in high
+static const char *
+dmr_moto_supp_name (uint8_t op, uint16_t so)
+{
+  switch (op)
+  {
+    case 0x1D: return "Remote Monitor";
+    case 0x1E: return "Remote Dekey";
+    case 0x1F: return "Call Alert";
+    case 0x27: return "Emergency";
+    case 0x20:
+      switch (so >> 8)
+      { case 0x9D: return "Remote Monitor Ack"; case 0x9F: return "Call Alert Ack";
+        case 0xA7: return "Emergency Ack";      default:   return "Ack"; }
+    case 0x24:
+      switch (so & 0xFF)
+      { case 0x00: return "Radio Check";     case 0x7E: return "Unstun";    case 0x7F: return "Stun";
+        case 0x80: return "Radio Check Ack"; case 0xFE: return "Unstun Ack"; case 0xFF: return "Stun Ack";
+        default:   return "Radio Control"; }
+    default: return NULL;
+  }
+}
+
 //function for handling Control Signalling PDUs (CSBK, MBC) messages
 void dmr_cspdu (dsd_opts * opts, dsd_state * state, uint8_t cs_pdu_bits[], uint8_t cs_pdu[], uint32_t CRCCorrect, uint32_t IrrecoverableErrors)
 {
@@ -1093,7 +1117,23 @@ void dmr_cspdu (dsd_opts * opts, dsd_state * state, uint8_t cs_pdu_bits[], uint8
         dmr_gateway_identifier (pm_source, pm_target);
       }
 
-      if (csbk_o == 30)
+      //Motorola supplementary services reuse these opcodes under FID 0x10
+      if (csbk_fid == 0x10 && (csbk_o==0x1D || csbk_o==0x1E || csbk_o==0x1F || csbk_o==0x20 || csbk_o==0x24 || csbk_o==0x27))
+      {
+        uint16_t supp_so  = (uint16_t)ConvertBitIntoBytes(&cs_pdu_bits[16], 16);
+        uint32_t supp_tgt = (uint32_t)ConvertBitIntoBytes(&cs_pdu_bits[32], 24);
+        uint32_t supp_src = (uint32_t)ConvertBitIntoBytes(&cs_pdu_bits[56], 24);
+        const char * supp_name = dmr_moto_supp_name ((uint8_t)csbk_o, supp_so);
+        if (supp_name)
+        {
+          fprintf (stderr, "\n Supplementary Service - %s - Target: %d; Source: %d; ", supp_name, supp_tgt, supp_src);
+          dmr_gateway_identifier (supp_src, supp_tgt);
+          char supp_str[64]; snprintf (supp_str, sizeof(supp_str), "%s TGT: %d; SRC: %d;", supp_name, supp_tgt, supp_src);
+          watchdog_event_datacall (opts, state, supp_src, supp_tgt, supp_str, state->currentslot);
+        }
+      }
+
+      if (csbk_o == 30 && csbk_fid != 0x10)
       {
         //initial line break
         fprintf (stderr, "\n");
@@ -1133,7 +1173,7 @@ void dmr_cspdu (dsd_opts * opts, dsd_state * state, uint8_t cs_pdu_bits[], uint8
         }
       }
 
-      if (csbk_o == 31)
+      if (csbk_o == 31 && csbk_fid != 0x10)
       {
         //initial line break
         fprintf (stderr, "\n");
