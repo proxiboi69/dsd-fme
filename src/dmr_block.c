@@ -1350,15 +1350,17 @@ void dmr_block_assembler (dsd_opts * opts, dsd_state * state, uint8_t block_byte
             dmr_locn(opts, state, len, state->dmr_pdu_sf[slot]+7);
             sprintf (state->event_history_s[slot].Event_History_Items[0].gps_s, "%s", state->dmr_lrrp_gps[slot]);
           }
+          else if (mnis_type == 0x88)
+            dmr_xnl (opts, state, len, msrc, mdst, state->dmr_pdu_sf[slot]+7);
 
           //dump to event history
-          if (mnis_type != 0x11 && mnis_type != 0x01) //if not LRRP or LOCN
+          if (mnis_type != 0x11 && mnis_type != 0x01 && mnis_type != 0x88) //generic (no dedicated decoder)
           {
             char mnis_str[200]; memset (mnis_str, 200, sizeof(mnis_str));
             sprintf (mnis_str, "MNIS TGT: %lld; SRC: %lld;", state->dmr_lrrp_source[slot], state->dmr_lrrp_target[slot]);
             watchdog_event_datacall (opts, state, state->dmr_lrrp_source[slot], state->dmr_lrrp_target[slot], mnis_str, slot);
           }
-          else if (mnis_type == 0x11 || mnis_type == 0x01) //LRRP or LOCN
+          else if (mnis_type == 0x11 || mnis_type == 0x01 || mnis_type == 0x88) //decoder filled dmr_lrrp_gps
             watchdog_event_datacall (opts, state, state->dmr_lrrp_source[slot], state->dmr_lrrp_target[slot], state->dmr_lrrp_gps[slot], slot);
 
         }
