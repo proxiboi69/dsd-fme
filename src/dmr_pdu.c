@@ -339,17 +339,15 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
     uint16_t udp_chk = (input[26] << 8) | input[27];
     fprintf (stderr, "\n UDP Protocol; Datagram Len: %d; UDP Checksum: %04X; ", udp_len, udp_chk);
 
-    //if dst port and src prt don't match, then make it so
-    if (port2 != port1) port1 = port2;
-
-    if (port1 == 231 && port2 == 231)
+    //service port may be src or dst
+    if (port1 == 231 || port2 == 231)
     {
       fprintf (stderr, "Cellocator;");
       sprintf (state->dmr_lrrp_gps[slot], "Cellocator SRC: %d; DST: %d;", src24, dst24);
       if (len > 28)
         decode_cellocator(opts, state, input+28, len-28);
     }
-    else if (port1 == 4001 && port2 == 4001)
+    else if (port1 == 4001 || port2 == 4001)
     {
       //sanity check
       if (len > 33)
@@ -359,20 +357,20 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
       dmr_lrrp (opts, state, len, src24, dst24, input+28); //len is offset with IP and UDP header lens, 4 CRC, and 1 for the 0D token
       state->event_history_s[slot].Event_History_Items[0].color_pair = 4; //Remus, add this line to a decode to change its line color
     }
-    else if (port1 == 4004 && port2 == 4004)
+    else if (port1 == 4004 || port2 == 4004)
     {
       fprintf (stderr, "XCMP;");
       sprintf (state->dmr_lrrp_gps[slot], "XCMP SRC: %d; DST: %d;", src24, dst24);
       state->event_history_s[slot].Event_History_Items[0].color_pair = 4; //Remus, add this line to a decode to change its line color
     }
-    else if (port1 == 4005 && port2 == 4005)
+    else if (port1 == 4005 || port2 == 4005)
     {
       fprintf (stderr, "ARS;");
       //TODO: ARS Decoder
       sprintf (state->dmr_lrrp_gps[slot], "ARS SRC: %d; DST: %d; ", src24, dst24);
       utf8_to_text(state, 0, 10, input+28); //seen some ARS radio IDs in ASCII/ISO7/UTF8 format here
     }
-    else if (port1 == 4007 && port2 == 4007)
+    else if (port1 == 4007 || port2 == 4007)
     {
       int tms_len = (input[28] << 8) | input[29];
       fprintf (stderr, " TMS ");
@@ -445,34 +443,34 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
         fprintf (stderr, "Acknowledgment;");
       }
     }
-    else if (port1 == 4008 && port2 == 4008)
+    else if (port1 == 4008 || port2 == 4008)
     {
       fprintf (stderr, "Telemetry;");
       sprintf (state->dmr_lrrp_gps[slot], "Telemetry SRC: %d; DST: %d;", src24, dst24);
     }
-    else if (port1 == 4009 && port2 == 4009)
+    else if (port1 == 4009 || port2 == 4009)
     {
       fprintf (stderr, "OTAP;");
       sprintf (state->dmr_lrrp_gps[slot], "OTAP SRC: %d; DST: %d;", src24, dst24);
     }
-    else if (port1 == 4012 && port2 == 4012)
+    else if (port1 == 4012 || port2 == 4012)
     {
       fprintf (stderr, "Battery Management;");
       sprintf (state->dmr_lrrp_gps[slot], "Batt. Man. SRC: %d; DST: %d;", src24, dst24);
     }
-    else if (port1 == 4013 && port2 == 4013)
+    else if (port1 == 4013 || port2 == 4013)
     {
       fprintf (stderr, "Job Ticket Server;");
       sprintf (state->dmr_lrrp_gps[slot], "JTS SRC: %d; DST: %d;", src24, dst24);
     }
-    else if (port1 == 4069 && port2 == 4069)
+    else if (port1 == 4069 || port2 == 4069)
     {
       //https://trbonet.com/kb/how-to-configure-dt500-and-mobile-radio-to-work-with-scada-sensors/
       fprintf (stderr, "TRBOnet SCADA;");
       sprintf (state->dmr_lrrp_gps[slot], "SCADA SRC: %d; DST: %d;", src24, dst24);
     }
     //ETSI specific -- unknown entry value, assuming +28
-    else if (port1 == 5016 && port2 == 5016)
+    else if (port1 == 5016 || port2 == 5016)
     {
       //sanity check
       if (len > 29)
@@ -483,7 +481,7 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
       utf16_to_text(state, 1, len, input+28);
     }
     //Vertex Standard TMS Port
-    else if (port1 == 5007 && port2 == 5007)
+    else if (port1 == 5007 || port2 == 5007)
     {
 
       fprintf (stderr, "VTX STD TMS; ");
@@ -505,7 +503,7 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
       sprintf (state->dmr_lrrp_gps[slot], "VTX TMS SRC: %d; DST: %d; ", src24, dst24);
       utf16_to_text(state, 1, tmslen*2, input+37);
     }
-    else if (port1 == 5017 && port2 == 5017)
+    else if (port1 == 5017 || port2 == 5017)
     {
       //sanity check
       if (len > 32)
@@ -516,13 +514,13 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
       lip_protocol_decoder(opts, state, bits);
     }
     //known P25 Ports
-    else if (port1 == 9361 && port2 == 9361)
+    else if (port1 == 9361 || port2 == 9361)
     {
       sprintf (state->dmr_lrrp_gps[slot], "P25 Atlas SRC(IP): %d.%d.%d.%d; DST(IP): %d.%d.%d.%d; ",
                input[12], input[13], input[14], input[15], input[16], input[17], input[18], input[19]);
       fprintf (stderr, "Atlas Data Registration Server;"); //EF Johnson Atlas
     }
-    else if (port1 == 49198 && port2 == 49198)
+    else if (port1 == 49198 || port2 == 49198)
     {
       sprintf (state->dmr_lrrp_gps[slot], "P25 Tier 2 LOCN SRC(IP): %d.%d.%d.%d; DST(IP): %d.%d.%d.%d; ",
                input[12], input[13], input[14], input[15], input[16], input[17], input[18], input[19]);
