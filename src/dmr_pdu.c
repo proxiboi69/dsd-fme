@@ -360,7 +360,7 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
     else if (port1 == 4004 || port2 == 4004)
     {
       fprintf (stderr, "XCMP;");
-      sprintf (state->dmr_lrrp_gps[slot], "XCMP SRC: %d; DST: %d;", src24, dst24);
+      dmr_xnl (opts, state, len > 28 ? len - 28 : 0, src24, dst24, input + 28);
       state->event_history_s[slot].Event_History_Items[0].color_pair = 4; //Remus, add this line to a decode to change its line color
     }
     else if (port1 == 4005 || port2 == 4005)
@@ -549,6 +549,209 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
 
   watchdog_event_datacall (opts, state, src24, dst24, state->dmr_lrrp_gps[slot], slot);
 
+}
+
+//XNL transport opcode -> name
+static const char *
+dmr_xnl_name (uint16_t op)
+{
+  switch (op)
+  {
+    case 0:  return "Reserved";
+    case 1:  return "MasterPresentBroadcast";
+    case 2:  return "MasterStatusBroadcast";
+    case 3:  return "DeviceMasterQuery";
+    case 4:  return "DeviceAuthKeyRequest";
+    case 5:  return "DeviceAuthKeyReply";
+    case 6:  return "DeviceConnectRequest";
+    case 7:  return "DeviceConnectReply";
+    case 8:  return "DeviceSysMapRequest";
+    case 9:  return "DeviceSysMapBroadcast";
+    case 10: return "DeviceResetMessage";
+    case 11: return "DataMessage";
+    case 12: return "DataMessageAck";
+    default: return NULL;
+  }
+}
+
+//RCMP/XCMP opcode id -> name
+static const char *
+dmr_xcmp_name (uint16_t id)
+{
+  switch (id)
+  {
+    //RCMP (programming dialect)
+    case 0x010: return "ReadWriteModelNumber";
+    case 0x011: return "ReadWriteSerialNumber";
+    case 0x012: return "ReadUUID";
+    case 0x01f: return "TanapaNumber";
+    case 0x023: return "DiscoverRemoteDevice";
+    case 0x024: return "RemoteConnect";
+    case 0x025: return "RemoteDisconnect";
+    case 0x030: return "ConnectivityTest";
+    case 0x037: return "CodeplugAttribute";
+    case 0x03d: return "SecureConnect";
+    case 0x03f: return "FactoryReset";
+    case 0x100: return "ReadIshItem";
+    case 0x101: return "WriteIshItem";
+    case 0x102: return "DeleteIshIDs";
+    case 0x104: return "ReadIshIDSet";
+    case 0x105: return "ReadIshTypeSet";
+    case 0x106: return "IshProgramMode";
+    case 0x107: return "IshReorgControl";
+    case 0x108: return "IshUnlockPartition";
+    case 0x10b: return "PsdtAccess";
+    case 0x10c: return "RadioUpdateControl";
+    case 0x200: return "EnterBootMode";
+    case 0x201: return "ReadMemory";
+    case 0x202: return "WriteMemory";
+    case 0x203: return "EraseFlash";
+    case 0x204: return "BootJumpExecution";
+    case 0x206: return "BootWriteCommit";
+    case 0x207: return "RemoteDuplicateSetup";
+    case 0x208: return "FpgaOperation";
+    case 0x300: return "ReadRadioKey";
+    case 0x301: return "UnlockSecurity";
+    case 0x434: return "NetworkInfConfig";
+    case 0x440: return "MemoryStreamRead";
+    case 0x441: return "MemoryStreamWrite";
+    case 0x461: return "ModuleInfo";
+    case 0x480: return "CertificateManagement";
+    case 0x48a: return "SecureCertificateManagement";
+    //XCMP (radio control)
+    case 0x00c: return "TestMode";
+    case 0x00e: return "RadioStatus";
+    case 0x00f: return "VersionInfo";
+    case 0x10e: return "ComponentRead";
+    case 0x10f: return "ComponentSession";
+    case 0x401: return "DisplayText";
+    case 0x402: return "IndicatorUpdate";
+    case 0x403: return "Backlight";
+    case 0x404: return "GPOut";
+    case 0x405: return "PhysicalUserInput";
+    case 0x406: return "VolumeControl";
+    case 0x407: return "SpeakerControl";
+    case 0x408: return "TxPowerLevel";
+    case 0x409: return "ToneControl";
+    case 0x40a: return "ShutDown";
+    case 0x40b: return "Location";
+    case 0x40c: return "MonitorControl";
+    case 0x40d: return "ChannelZoneSelect";
+    case 0x40e: return "MicControl";
+    case 0x40f: return "ScanControl";
+    case 0x410: return "BatteryLevel";
+    case 0x411: return "Brightness";
+    case 0x412: return "ButtonConfig";
+    case 0x413: return "EmergencyControl";
+    case 0x414: return "AudioRouting";
+    case 0x415: return "TransmitControl";
+    case 0x418: return "SirenPA";
+    case 0x41b: return "SignalDetect";
+    case 0x41c: return "RemoteRadioControl";
+    case 0x41d: return "DataSession";
+    case 0x41e: return "CallControl";
+    case 0x41f: return "MenuListNav";
+    case 0x421: return "DeviceControlMgr";
+    case 0x422: return "DisplayMode";
+    case 0x427: return "TrunkSystemStatus";
+    case 0x428: return "DeviceMgr";
+    case 0x429: return "EncryptionControl";
+    case 0x42c: return "SignalToneTx";
+    case 0x42d: return "SubAudioDevice";
+    case 0x431: return "Ping";
+    case 0x432: return "TimeService";
+    case 0x437: return "USBStatus";
+    case 0x439: return "PinControl";
+    case 0x43a: return "RfFreqControl";
+    case 0x43b: return "RxSigSyncControl";
+    case 0x43d: return "BluetoothConfig";
+    case 0x43e: return "BluetoothStatus";
+    case 0x443: return "NANDAccess";
+    case 0x444: return "FTLAccess";
+    case 0x445: return "FileAccess";
+    case 0x446: return "TransferData";
+    case 0x448: return "VoiceAnnouncement";
+    case 0x449: return "KeypadLock";
+    case 0x44b: return "RadioWideParameter";
+    case 0x44e: return "ScreenSaver";
+    case 0x456: return "Accelerometer";
+    case 0x457: return "Mandown";
+    case 0x459: return "DisplayTemplate";
+    case 0x45a: return "DisplayTemplateNav";
+    case 0x45d: return "SensorStatus";
+    case 0x45f: return "WindDataTxControl";
+    case 0x462: return "RadioProfile";
+    case 0x465: return "EnhancedOptionBoard";
+    case 0x466: return "TextMessageControl";
+    case 0x467: return "CodeplugPasswordLock";
+    case 0x46b: return "ErrorLog";
+    case 0x46c: return "RadioUnkill";
+    case 0x46e: return "ScanListControl";
+    case 0x46f: return "LogicalUserInput";
+    case 0x472: return "ContactListControl";
+    case 0x475: return "VoiceFeatureControl";
+    case 0x476: return "AccessoryStatus";
+    case 0x477: return "CodeplugBlockUpdate";
+    case 0x479: return "APModem";
+    case 0x47a: return "UserLogin";
+    case 0x47b: return "CurrentLimiter";
+    case 0x47f: return "WLANControl";
+    case 0x482: return "LoggingData";
+    case 0x483: return "LocationTrigger";
+    case 0x484: return "VOXControl";
+    case 0x487: return "LoneWorker";
+    case 0x488: return "AudioRecording";
+    case 0x489: return "AirplaneMode";
+    case 0x48c: return "RFDesenseControl";
+    case 0x48d: return "BroadbandModem";
+    case 0x492: return "VocoderControl";
+    case 0x5ff: return "UnitTest";
+    default:    return NULL;
+  }
+}
+
+//XCMP opcode class from the top nibble
+static const char *
+dmr_xcmp_class (uint16_t op)
+{
+  switch (op & 0xF000)
+  {
+    case 0xB000: return "broadcast";
+    case 0x8000: return "reply";
+    case 0x0000: return "request";
+    default:     return "?";
+  }
+}
+
+//control PDU opcode (BE16 at offset 0): XNL transport (XCMP inside DataMessage), else XCMP
+void dmr_xnl (dsd_opts * opts, dsd_state * state, uint16_t len, uint32_t source, uint32_t dest, uint8_t * DMR_PDU)
+{
+  UNUSED(opts);
+  uint8_t slot = state->currentslot;
+  if (len < 2) return;
+
+  uint16_t op = (DMR_PDU[0] << 8) | DMR_PDU[1];
+  char hex[81]; uint16_t n = len > 40 ? 40 : len;
+  for (uint16_t i = 0; i < n; i++) sprintf (hex + (i*2), "%02X", DMR_PDU[i]);
+
+  char label[96];
+  const char * xnl = dmr_xnl_name (op);
+  if (xnl && op == 11 && len >= 4) //DataMessage carries an XCMP PDU at payload offset 0
+  {
+    uint16_t xop = (DMR_PDU[2] << 8) | DMR_PDU[3];
+    const char * name = dmr_xcmp_name (xop & 0x0FFF);
+    snprintf (label, sizeof label, "XNL DataMessage / XCMP %s %s op=%04X", name ? name : "Unknown", dmr_xcmp_class (xop), xop);
+  }
+  else if (xnl)
+    snprintf (label, sizeof label, "XNL %s op=%04X", xnl, op);
+  else
+  {
+    const char * name = dmr_xcmp_name (op & 0x0FFF);
+    snprintf (label, sizeof label, "XCMP %s %s op=%04X", name ? name : "Unknown", dmr_xcmp_class (op), op);
+  }
+
+  fprintf (stderr, "\n %s DATA=%s", label, hex);
+  sprintf (state->dmr_lrrp_gps[slot], "%s DATA=%s TGT: %u SRC: %u", label, hex, dest, source);
 }
 
 //The contents of this function are mostly trial and error
