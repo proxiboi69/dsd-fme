@@ -366,9 +366,7 @@ void decode_ip_pdu (dsd_opts * opts, dsd_state * state, uint16_t len, uint8_t * 
     else if (port1 == 4005 || port2 == 4005)
     {
       fprintf (stderr, "ARS;");
-      //TODO: ARS Decoder
-      sprintf (state->dmr_lrrp_gps[slot], "ARS SRC: %d; DST: %d; ", src24, dst24);
-      utf8_to_text(state, 0, 10, input+28); //seen some ARS radio IDs in ASCII/ISO7/UTF8 format here
+      dmr_ars (opts, state, len > 28 ? len - 28 : 0, src24, dst24, input + 28);
     }
     else if (port1 == 4007 || port2 == 4007)
     {
@@ -802,6 +800,58 @@ dmr_xcmp_fields (char * out, size_t cap, uint16_t op, const uint8_t * msg, uint1
                   f[0], (f[1]<<8)|f[2], (f[3]<<8)|f[4], (f[5]<<8)|f[6], (f[7]<<8)|f[8], (f[9]<<8)|f[10]);
       break;
   }
+}
+
+//MOTOTRBO ARS (UDP 4005 / MNIS 0x33). Strings are len-prefixed UTF-8, not NUL-terminated.
+void dmr_ars (dsd_opts * opts, dsd_state * state, uint16_t len, uint32_t source, uint32_t dest, uint8_t * DMR_PDU)
+{
+  UNUSED(opts);
+  uint8_t slot = state->currentslot;
+  if (len < 3) return;
+
+  uint8_t h = DMR_PDU[2]; //EXT|ACK|PRI|CTL|type[4]
+  uint8_t ext = (h >> 7) & 1, ack = (h >> 6) & 1, type = h & 0x0F;
+  const char * tn;
+  switch (type)
+  {
+    case 0x0: tn = "Device Registration Request";  break;
+    case 0x1: tn = "Device Deregistration";        break;
+    case 0x4: tn = "Status Query";                 break;
+    case 0x5: tn = "User Registration Request";    break;
+    case 0x6: tn = "User Deregistration";          break;
+    case 0x7: tn = "User Registration Response";   break;
+    case 0xF: tn = "Response";                     break;
+    default:  tn = "?";                            break;
+  }
+
+  char info[256]; int p = 0; info[0] = 0;
+  int i = 3;
+  if ((type == 0x0 || type == 0x5) && ext)
+  {
+    uint8_t rh = (i < len) ? DMR_PDU[i++] : 0;
+    uint8_t ev = (rh >> 5) & 3;
+    p += snprintf (info + p, sizeof info - p, " Event:%s Encoding:%u",
+                   ev == 1 ? "Initial" : ev == 2 ? "Refresh" : "DontCare", rh & 0x1F);
+    if (p >= (int)sizeof info) p = (int)sizeof info - 1;
+    static const char * fn[3] = { "Device ID", "User ID", "Password" };
+    for (int f = 0; f < 3 && i < len; f++)
+    {
+      uint8_t ln = DMR_PDU[i++];
+      if (i + ln > len) ln = len - i;
+      p += snprintf (info + p, sizeof info - p, " %s:%.*s", fn[f], ln, (char *)(DMR_PDU + i));
+      if (p >= (int)sizeof info) p = (int)sizeof info - 1;
+      i += ln;
+    }
+  }
+  else if (type == 0xF && ext && i < len)
+  {
+    uint8_t v = DMR_PDU[i] & 0x7F;
+    if (ack) snprintf (info, sizeof info, " Fail:%u", v);
+    else     snprintf (info, sizeof info, " Success Refresh:%u", v * 30); //30-min units
+  }
+
+  fprintf (stderr, "\n ARS %s;%s", tn, info);
+  sprintf (state->dmr_lrrp_gps[slot], "ARS %s;%s SRC: %u; DST: %u;", tn, info, source, dest);
 }
 
 //control PDU opcode (BE16 at offset 0): XNL transport (XCMP inside DataMessage), else XCMP
