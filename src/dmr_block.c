@@ -1310,10 +1310,10 @@ void dmr_block_assembler (dsd_opts * opts, dsd_state * state, uint8_t block_byte
         }
         else if (state->data_header_sap[slot] == 1 && state->dmr_pdu_sf[slot][1] == 0x10) //MNIS Proprietary Header
         {
-          //len calc
+          //strip 7-byte MNIS header and 4-byte CRC32
           uint16_t ctr = state->data_byte_ctr[slot];
           uint8_t  poc = state->data_block_poc[slot];
-          uint16_t len = ctr-poc-4-7-3;
+          uint16_t len = ctr-poc-7-4;
 
           //sanity check
           if (len > 150)
