@@ -1472,6 +1472,25 @@ void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 
   fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
 
+  //1-C 16.2.1: Nr_ob interleaved repeats, Tr_ob max 500ms
+  static char seen[25][200]; //1-A 6.2.2.1, 4.4: 2 msg x 500ms / 40ms
+  static int64_t seen_ms[25];
+  static int next;
+  struct timespec ts;
+  clock_gettime (CLOCK_MONOTONIC, &ts);
+  int64_t now = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  for (int i = 0; i < 25; i++)
+  {
+    if (now - seen_ms[i] <= 500 && strcmp (str, seen[i]) == 0)
+    {
+      seen_ms[i] = now;
+      return;
+    }
+  }
+  strcpy (seen[next], str);
+  seen_ms[next] = now;
+  next = (next + 1) % 25;
+
   watchdog_event_datacall (opts, state, unit, group, str, 0);
 }
 
