@@ -1341,6 +1341,7 @@ char * NXDN_Call_Type_To_Str(uint8_t CallType);
 void NXDN_Voice_Call_Option_To_Str(uint8_t VoiceCallOption, uint8_t * Duplex, uint8_t * TransmissionMode);
 void NXDN_Data_Call_Option_To_Str(uint8_t DataCallOption, uint8_t * Duplex, uint8_t * TransmissionMode);
 char * NXDN_Cipher_Type_To_Str(uint8_t CipherType);
+char * NXDN_Cause_MM_To_Str(uint8_t Cause);
 //added these
 void NXDN_decode_Prop(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_Alias(dsd_opts * opts, dsd_state * state, uint8_t * Message);
@@ -1351,6 +1352,7 @@ void NXDN_decode_srv_info(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 void NXDN_decode_site_info(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_decode_dst_info(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_adj_site(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_iv(dsd_opts * opts, dsd_state * state, int type, uint8_t * Message);
 void nxdn_dcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);

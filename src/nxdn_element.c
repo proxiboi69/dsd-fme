@@ -165,6 +165,14 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
       NXDN_decode_adj_site(opts, state, ElementsContent);
       break;
 
+    //REG_RESP, REG_C_RESP, REG_COMM, GRP_REG_RESP
+    case 0x20:
+    case 0x22:
+    case 0x23:
+    case 0x24:
+      NXDN_decode_REG_RESP(opts, state, ElementsContent);
+      break;
+
     //VCALL, TX_REL_EXT and TX_REL
     case 0x07: //TX_REL_EXT
     case 0x08: //TX_REL
@@ -1400,6 +1408,71 @@ void NXDN_decode_adj_site(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 
   fprintf (stderr, "%s", KNRM);
 
+}
+
+//1-A 6.4.2: REG_RESP, REG_C_RESP, REG_COMM, GRP_REG_RESP
+void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t hv = Message[9];
+  uint8_t cause = 0;
+  uint16_t unit = 0, group = 0, vunit = 0, vgroup = 0;
+  uint32_t sys_code = 0;
+  int has_cause = 1;
+  const char * name;
+
+  if (mt == 0x24) //Option[8] Unit Group Cause [VGroup]
+  {
+    name   = "Group Registration Response";
+    unit   = (uint16_t)ConvertBitIntoBytes(&Message[16], 16);
+    group  = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
+    cause  = (uint8_t)ConvertBitIntoBytes(&Message[48], 8);
+    if (hv) vgroup = (uint16_t)ConvertBitIntoBytes(&Message[56], 16);
+  }
+  else //Option[5] LocationID w/o Site Code[19] Unit ...
+  {
+    uint32_t loc = (uint32_t)ConvertBitIntoBytes(&Message[13], 19) << 5;
+    uint8_t cat = loc >> 22;
+    if      (cat == 0) sys_code = (loc >> 12) & 0x3FF;
+    else if (cat == 2) sys_code = (loc >> 8) & 0x3FFF;
+    else if (cat == 1) sys_code = (loc >> 5) & 0x1FFFF;
+    unit = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
+
+    if (mt == 0x20) //Group Cause [VUnit VGroup]
+    {
+      name  = "Registration Response";
+      group = (uint16_t)ConvertBitIntoBytes(&Message[48], 16);
+      cause = (uint8_t)ConvertBitIntoBytes(&Message[64], 8);
+      if (hv)
+      {
+        vunit  = (uint16_t)ConvertBitIntoBytes(&Message[72], 16);
+        vgroup = (uint16_t)ConvertBitIntoBytes(&Message[88], 16);
+      }
+    }
+    else if (mt == 0x22)
+    {
+      name  = "Registration Clear Response";
+      cause = (uint8_t)ConvertBitIntoBytes(&Message[48], 8);
+    }
+    else
+    {
+      name = "Registration Command";
+      has_cause = 0;
+    }
+  }
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d;", name, unit);
+  if (group)     p += snprintf (str + p, sizeof(str) - p, " TGT: %d;", group);
+  if (sys_code)  p += snprintf (str + p, sizeof(str) - p, " Home System Code: %d;", sys_code);
+  if (hv)        p += snprintf (str + p, sizeof(str) - p, " Visitor Unit ID: %d; Visitor Group ID: %d;", vunit, vgroup);
+  if (em)        p += snprintf (str + p, sizeof(str) - p, " Emergency;");
+  if (has_cause) snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_MM_To_Str(cause), cause);
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  watchdog_event_datacall (opts, state, unit, group, str, 0);
 }
 
 void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
@@ -3132,3 +3205,30 @@ char * NXDN_Cipher_Type_To_Str(uint8_t CipherType)
 
   return Ptr;
 } /* End NXDN_Cipher_Type_To_Str() */
+
+//1-A Table 6.5-27
+char * NXDN_Cause_MM_To_Str(uint8_t Cause)
+{
+  char * Ptr = NULL;
+
+  switch(Cause & 0x7F)
+  {
+    case 0x01: Ptr = "Registration is accepted";                               break;
+    case 0x04: Ptr = "Location is accepted, but Group is failed";              break;
+    case 0x05: Ptr = "Location is accepted, but Group is refused";             break;
+    case 0x06: Ptr = "Registration is failed";                                 break;
+    case 0x08: Ptr = "Registration is refused";                                break;
+    case 0x51: Ptr = "Network failure";                                        break;
+    case 0x52: Ptr = "Temporary failure";                                      break;
+    case 0x53: Ptr = "Equipment congestion";                                   break;
+    case 0x5F: Ptr = "Other class for resource unavailable";                   break;
+    case 0x60: Ptr = "Request for unavailable service";                        break;
+    case 0x6F: Ptr = "Other class for service unavailable or unsupported";     break;
+    case 0x70: Ptr = "Lack of mandatory information elements";                 break;
+    case 0x71: Ptr = "Undefined information element or Invalid contents";      break;
+    case 0x7F: Ptr = "Other class for procedure error";                        break;
+    default:   Ptr = "Reserved";                                               break;
+  }
+
+  return Ptr;
+} /* End NXDN_Cause_MM_To_Str() */
