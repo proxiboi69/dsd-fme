@@ -625,6 +625,9 @@ uint8_t ncurses_input_handler(dsd_opts * opts, dsd_state * state, int c)
     state->nxdn_location_site_code = 0;
     state->nxdn_location_sys_code = 0;
     sprintf (state->nxdn_location_category, "%s", " ");
+    state->nxdn_svc_info = 0;
+    state->nxdn_version = 0;
+    state->nxdn_adj_sites = 0;
 
     state->nxdn_last_ran = -1; //0
     state->nxdn_ran = 0; //0
