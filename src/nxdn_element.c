@@ -179,6 +179,17 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
       NXDN_decode_AUTH_INQ_REQ(opts, state, ElementsContent);
       break;
 
+    //VCALL_REC_REQ, DCALL_REC_REQ
+    case 0x02:
+    case 0x0A:
+      NXDN_decode_CALL_REC_REQ(opts, state, ElementsContent);
+      break;
+
+    //SDCALL_RESP
+    case 0x3B:
+      NXDN_decode_SDCALL_RESP(opts, state, ElementsContent);
+      break;
+
     //VCALL, TX_REL_EXT and TX_REL
     case 0x07: //TX_REL_EXT
     case 0x08: //TX_REL
@@ -1537,6 +1548,113 @@ void NXDN_decode_AUTH_INQ_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Mess
     p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC", sys_code);
   }
   if (em) snprintf (str + p, sizeof(str) - p, " Emergency;");
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.5: RCCH outbound 0x01, 0x03, 0x09 differ from RTCH
+void NXDN_CAC_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  if (mt == 0x01 || mt == 0x03 || mt == 0x09)
+    NXDN_decode_CALL_RESP(opts, state, Message);
+  else
+    NXDN_Elements_Content_decode(opts, state, 1, Message);
+}
+
+//1-A 6.4.1.20, 6.4.1.24, 6.4.1.28: VCALL_RESP, VCALL_CONN_RESP, DCALL_RESP
+void NXDN_decode_CALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+  uint8_t cause = (uint8_t)ConvertBitIntoBytes(&Message[56], 8);
+  const char * alias, * name;
+
+  if (mt == 0x01)      { alias = "VCALL_RESP";      name = "Voice Call Response"; }
+  else if (mt == 0x03) { alias = "VCALL_CONN_RESP"; name = "Voice Call Connection Response"; }
+  else                 { alias = "DCALL_RESP";      name = "Data Call Response"; }
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s;", name, src, dst, NXDN_Call_Type_To_Str(call_type));
+  if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
+  snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_VD_To_Str(cause), cause);
+
+  fprintf (stderr, "%s %s\n %s%s", KYEL, alias, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.1.21, 6.4.1.29: VCALL_REC_REQ, DCALL_REC_REQ
+void NXDN_decode_CALL_REC_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t ii = Message[9];
+  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s;",
+                 mt == 0x02 ? "Voice Call Reception Request" : "Data Call Reception Request",
+                 src, dst, NXDN_Call_Type_To_Str(call_type));
+
+  if (mt == 0x02 && call_type == 6) //Digit[4] x 22, 1-A Table 6.5-13
+  {
+    char digits[23]; int n = 0, ext = 0;
+    for (int i = 0; i < 22; i++)
+    {
+      uint8_t d = (uint8_t)ConvertBitIntoBytes(&Message[56+i*4], 4);
+      if (d == 0) break;
+      if (d == 0xF) { ext = 1; continue; }
+      if (ext && d >= 1 && d <= 4) digits[n++] = 'A' + d - 1;
+      else if (d >= 1 && d <= 9)   digits[n++] = '0' + d;
+      else if (d == 0xA)           digits[n++] = '0';
+      else if (d == 0xB)           digits[n++] = '*';
+      else if (d == 0xC)           digits[n++] = '#';
+      ext = 0;
+    }
+    digits[n] = 0;
+    if (n) p += snprintf (str + p, sizeof(str) - p, " Digits: %s;", digits);
+  }
+  else if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
+    p += snprintf (str + p, sizeof(str) - p, " SRC System Code: %d;",
+                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[61], 19)));
+  if (em) snprintf (str + p, sizeof(str) - p, " Emergency;");
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.1.11: SDCALL_RESP
+void NXDN_decode_SDCALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t em = Message[8];
+  uint8_t ii = Message[9];
+  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+  uint8_t cause = (uint8_t)ConvertBitIntoBytes(&Message[56], 8);
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "Short Data Call Response; SRC: %d; TGT: %d; %s;", src, dst, NXDN_Call_Type_To_Str(call_type));
+  if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
+  {
+    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[64], 2);
+    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC",
+                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[69], 19)));
+  }
+  if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
+  snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_SS_To_Str(cause), cause);
 
   fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
 
@@ -3171,20 +3289,21 @@ int nxdn_dcall_data(dsd_opts * opts, dsd_state * state, int type, uint8_t * Mess
   
 }
 
+//1-A Table 6.5-8, 1-E Table 6.6-15
 char * NXDN_Call_Type_To_Str(uint8_t CallType)
 {
   char * Ptr = NULL;
 
   switch(CallType)
   {
-    case 0:  Ptr = "Broadcast Call";        break;
-    case 1:  Ptr = "Group Call";            break;
-    case 2:  Ptr = "Idle";                  break; //"Unspecified Call" This value is used only on Idle Burst TX_REL message.
-    case 3:  Ptr = "Session Call";          break; //"reserved" is session call on Type D
-    case 4:  Ptr = "Private Call";          break;
-    case 5:  Ptr = "Reserved";              break;
-    case 6:  Ptr = "PSTN Interconnect Call"; break;
-    case 7:  Ptr = "PSTN Speed Dial Call";   break;
+    case 0:  Ptr = "Broadcast Call";    break;
+    case 1:  Ptr = "Conference Call";   break;
+    case 2:  Ptr = "Unspecified Call";  break;
+    case 3:  Ptr = "Session Call";      break; //Type-D only, reserved on Type-C
+    case 4:  Ptr = "Individual Call";   break;
+    case 5:  Ptr = "Reserved";          break;
+    case 6:  Ptr = "Interconnect Call"; break;
+    case 7:  Ptr = "Speed Dial Call";   break;
     default: Ptr = "Unknown Call Type"; break;
   }
 
@@ -3301,3 +3420,70 @@ char * NXDN_Cause_MM_To_Str(uint8_t Cause)
 
   return Ptr;
 } /* End NXDN_Cause_MM_To_Str() */
+
+//1-A Table 6.5-28
+char * NXDN_Cause_VD_To_Str(uint8_t Cause)
+{
+  char * Ptr = NULL;
+
+  switch(Cause & 0x7F)
+  {
+    case 0x10: Ptr = "Accepted normal";                                        break;
+    case 0x11: Ptr = "Called group is not permitted for the service";          break;
+    case 0x12: Ptr = "Calling SU is not permitted for the service";            break;
+    case 0x13: Ptr = "Called SU is not permitted for the service";             break;
+    case 0x14: Ptr = "Called SU has not done the registration yet";            break;
+    case 0x15: Ptr = "No response from the called SU";                         break;
+    case 0x16: Ptr = "Incoming call rejection for a called SU";                break;
+    case 0x18: Ptr = "Called SU is in busy";                                   break;
+    case 0x19: Ptr = "Called group is in busy";                                break;
+    case 0x1A: Ptr = "Calling SU is in busy";                                  break;
+    case 0x1C: Ptr = "SU has not been registered yet";                         break;
+    case 0x1D: Ptr = "Group has not been registered yet";                      break;
+    case 0x1E: Ptr = "Queuing interruption";                                   break;
+    case 0x20: Ptr = "Calling SU is not permitted for use";                    break;
+    case 0x21: Ptr = "Called SU is not permitted for use";                     break;
+    case 0x22: Ptr = "Group is not permitted for use";                         break;
+    case 0x30: Ptr = "All channel resources are in use";                       break;
+    case 0x31: Ptr = "All phone line resources are in use";                    break;
+    case 0x32: Ptr = "Called unit is being alerted";                           break;
+    case 0x33: Ptr = "Phone line is being alerted";                            break;
+    case 0x38: Ptr = "Called SU is in busy";                                   break;
+    case 0x39: Ptr = "Called group is in busy";                                break;
+    case 0x3F: Ptr = "Other queue without a specific reason";                  break;
+    case 0x50: Ptr = "Channel unavailable";                                    break;
+    case 0x51: Ptr = "Network failure";                                        break;
+    case 0x52: Ptr = "Temporary failure";                                      break;
+    case 0x53: Ptr = "Equipment congestion";                                   break;
+    case 0x5F: Ptr = "Other class for resource unavailable";                   break;
+    case 0x60: Ptr = "Request for unavailable service";                        break;
+    case 0x61: Ptr = "Request for unsupported service";                        break;
+    case 0x6F: Ptr = "Other class for service unavailable or unsupported";     break;
+    case 0x70: Ptr = "Lack of mandatory information elements";                 break;
+    case 0x71: Ptr = "Undefined information element or Invalid contents";      break;
+    case 0x7F: Ptr = "Other class for procedure error";                        break;
+    default:   Ptr = "Reserved";                                               break;
+  }
+
+  return Ptr;
+} /* End NXDN_Cause_VD_To_Str() */
+
+//1-A Table 6.5-29: VD values without queue and queuing interruption
+char * NXDN_Cause_SS_To_Str(uint8_t Cause)
+{
+  char * Ptr = NULL;
+  uint8_t c = Cause & 0x7F;
+
+  switch(c)
+  {
+    case 0x01: Ptr = "ACK (Receive success)";         break;
+    case 0x02: Ptr = "ACK (Send success)";            break;
+    case 0x08: Ptr = "NACK (Request for full retry)"; break;
+    case 0x09: Ptr = "NACK (Memory Full)";            break;
+    case 0x0A: Ptr = "NACK (Abort)";                  break;
+    case 0x1E: Ptr = "Reserved";                      break;
+    default:   Ptr = (c >> 4) == 3 ? "Reserved" : NXDN_Cause_VD_To_Str(c); break;
+  }
+
+  return Ptr;
+} /* End NXDN_Cause_SS_To_Str() */
