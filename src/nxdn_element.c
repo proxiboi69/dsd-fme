@@ -2025,7 +2025,8 @@ void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   //Channel here appears to be the prefix or home channel of the caller, not necessarily the channel the call is occuring on
   if (idas) fprintf (stderr, "- Prefix Ch: %d ", rep1);
 
-  if (MessageType == 0x07 && Message[56]) fprintf (stderr, "- TX "); //1-A Figure 6.4-7
+  if (MessageType == 0x07) //1-A 6.4.1.7: Transmission Flag
+    fprintf (stderr, "- Transmission %s ", Message[56] ? "permitted" : "inhibited");
 
   if (MessageType == 0x11) //1-A Figure 6.4-53: Cause (DISC) [Location ID]
   {
