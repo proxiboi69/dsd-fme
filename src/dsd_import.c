@@ -134,9 +134,11 @@ int csvChanImport(dsd_opts * opts, dsd_state * state) //channel map import
   int field_count = 0;
 
   long int chan_number;
+  long int chan_max = sizeof(state->trunk_chan_map) / sizeof(state->trunk_chan_map[0]);
 
   while (fgets(buffer, BSIZE, fp)) {
     field_count = 0;
+    chan_number = -1;
     row_count++;
     if (row_count == 1)
       continue; //don't want labels
@@ -148,19 +150,24 @@ int csvChanImport(dsd_opts * opts, dsd_state * state) //channel map import
         sscanf (field, "%ld", &chan_number);
       }
 
-      if (field_count == 1)
+      if (field_count == 1 && chan_number >= 0 && chan_number < chan_max)
       {
         sscanf (field, "%ld", &state->trunk_chan_map[chan_number]);
         //adding this should be compatible with EDACS, test and obsolete the LCN Import function if desired
-        sscanf (field, "%ld", &state->trunk_lcn_freq[state->lcn_freq_count]);
-        state->lcn_freq_count++; //keep tally of number of Frequencies imported
+        if (state->lcn_freq_count < (int)(sizeof(state->trunk_lcn_freq) / sizeof(state->trunk_lcn_freq[0])))
+        {
+          sscanf (field, "%ld", &state->trunk_lcn_freq[state->lcn_freq_count]);
+          state->lcn_freq_count++; //keep tally of number of Frequencies imported
+        }
       }
 
       field = strtok(NULL, ",");
       field_count++;
     }
-    fprintf (stderr, "Channel [%05ld] [%09ld]", chan_number, state->trunk_chan_map[chan_number]);
-    fprintf (stderr, "\n");
+    if (chan_number >= 0 && chan_number < chan_max)
+      fprintf (stderr, "Channel [%05ld] [%09ld]\n", chan_number, state->trunk_chan_map[chan_number]);
+    else
+      fprintf (stderr, "Channel [%05ld] out of range, skipped\n", chan_number);
 
   }
   fclose(fp);
