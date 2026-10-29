@@ -507,6 +507,20 @@ void nxdn_ca_info_handler (dsd_state * state, uint32_t ca_info)
   state->nxdn_step = step;
   state->nxdn_base_freq = base;
 
+  //1-A Table 6.5-38
+  const char * bf[8] = {"Reserved", "100 MHz", "330 MHz", "400 MHz", "750 MHz", "Reserved", "Reserved", "System definable"};
+  const char * st[4] = {"System definable", "System definable", "1.25 kHz", "3.125 kHz"};
+  if (RCN) fprintf (stderr, "\n Channel Access: DFA; Base Frequency: %s; Step: %s;", bf[base], st[step]);
+  else     fprintf (stderr, "\n Channel Access: Channel;");
+
+}
+
+void nxdn_cs_info_handler (dsd_state * state, uint16_t cs_info)
+{
+  UNUSED(state);
+  //1-A 6.5.35 Table 6.5-37: Bn[2] Gn[3] Pn[4] Mn[3] In[4]
+  fprintf (stderr, "\n Channel Structure: BCCH Frames: %d; Groups: %d; Paging Frames: %d; Multipurpose Frames: %d; Iterations: %d;",
+           cs_info >> 14, (cs_info >> 11) & 0x7, (cs_info >> 7) & 0xF, (cs_info >> 4) & 0x7, cs_info & 0xF);
 }
 
 //end sub-element handlers
@@ -1254,8 +1268,7 @@ void NXDN_decode_srv_info(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   nxdn_location_id_handler (state, location_id, 0);
 
   //run the srv info
-  if (opts->payload == 1)
-    nxdn_srv_info_handler (state, svc_info);
+  nxdn_srv_info_handler (state, svc_info);
 
   //run the rst info, if not zero
   if (rst_info) nxdn_rst_info_handler (state, rst_info);
@@ -1315,17 +1328,17 @@ void NXDN_decode_site_info(dsd_opts * opts, dsd_state * state, uint8_t * Message
   channel1    = (uint16_t)ConvertBitIntoBytes(&Message[124], 10);
   channel2    = (uint16_t)ConvertBitIntoBytes(&Message[134], 10);
 
-  //check the channel access information first
-  nxdn_ca_info_handler (state, ca_info);
-
   fprintf (stderr, "%s", KYEL);
-  fprintf (stderr, "\n Location ID [%06X] CSC [%04X] SVC [%04X] RST [%06X] \n          CA [%06X] V[%X] ADJ [%01X] ",
+  fprintf (stderr, "\n Location ID [%06X] CSC [%04X] SVC [%04X] RST [%06X] \n          CA [%06X] Version: %d; Adjacent Sites: %d; ",
                                 location_id, cs_info, svc_info, rst_info, ca_info, version_num, adj_alloc);
   nxdn_location_id_handler(state, location_id, 0);
 
+  //check the channel access information first
+  nxdn_ca_info_handler (state, ca_info);
+  nxdn_cs_info_handler (state, cs_info);
+
   //run the srv info
-  if (opts->payload == 1)
-    nxdn_srv_info_handler (state, svc_info);
+  nxdn_srv_info_handler (state, svc_info);
 
   //run the rst info, if not zero
   if (rst_info) nxdn_rst_info_handler (state, rst_info);
