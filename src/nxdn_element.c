@@ -190,6 +190,20 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
       NXDN_decode_SDCALL_RESP(opts, state, ElementsContent);
       break;
 
+    //STAT_INQ_REQ, STAT_INQ_RESP, STAT_REQ, STAT_RESP
+    case 0x30:
+    case 0x31:
+    case 0x32:
+    case 0x33:
+      NXDN_decode_STAT_REQ(opts, state, ElementsContent);
+      break;
+
+    //REM_CON_REQ, REM_CON_RESP
+    case 0x34:
+    case 0x35:
+      NXDN_decode_REM_CON_REQ(opts, state, ElementsContent);
+      break;
+
     //VCALL, TX_REL_EXT and TX_REL
     case 0x07: //TX_REL_EXT
     case 0x08: //TX_REL
@@ -1655,6 +1669,96 @@ void NXDN_decode_SDCALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Messa
   }
   if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
   snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_SS_To_Str(cause), cause);
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.1.13 to 6.4.1.16: STAT_INQ_REQ, STAT_INQ_RESP, STAT_REQ, STAT_RESP
+void NXDN_decode_STAT_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t ii = Message[9];
+  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+  uint8_t delivery = Message[20]; //Status Call Option bit 3
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+  int lid_pos = mt == 0x30 ? 56 : mt == 0x33 ? 64 : 72;
+  const char * name;
+
+  if (mt == 0x30)      name = "Status Inquiry Request";
+  else if (mt == 0x31) name = "Status Inquiry Response";
+  else if (mt == 0x32) name = "Status Request";
+  else                 name = "Status Response";
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s;", name, src, dst, NXDN_Call_Type_To_Str(call_type));
+  if (mt == 0x31 || mt == 0x32)
+  {
+    uint8_t status = (uint8_t)ConvertBitIntoBytes(&Message[64], 8);
+    p += snprintf (str + p, sizeof(str) - p, " Status: %d (%s);", status, NXDN_Status_To_Str(status));
+  }
+  if (mt == 0x32 && delivery) p += snprintf (str + p, sizeof(str) - p, " Confirmed;");
+  if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
+  {
+    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[lid_pos], 2);
+    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC",
+                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[lid_pos+5], 19)));
+  }
+  if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
+  if (mt == 0x31 || mt == 0x33)
+  {
+    uint8_t cause = (uint8_t)ConvertBitIntoBytes(&Message[56], 8);
+    snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_SS_To_Str(cause), cause);
+  }
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.1.17, 6.4.1.18: REM_CON_REQ, REM_CON_RESP
+void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t ii = Message[9];
+  uint8_t gu = Message[16];
+  uint8_t delivery = Message[18];
+  uint8_t cmd = (uint8_t)ConvertBitIntoBytes(&Message[19], 5);
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s; %s;",
+                 mt == 0x34 ? "Remote Control Request" : "Remote Control Response",
+                 src, dst, gu ? "Unit ID" : "Group ID", NXDN_Control_Command_To_Str(cmd));
+  if (mt == 0x34) //1-A Table 6.5-23
+  {
+    uint8_t param1 = (uint8_t)ConvertBitIntoBytes(&Message[56], 8);
+    uint8_t param2 = (uint8_t)ConvertBitIntoBytes(&Message[64], 8);
+    if (cmd == 0)
+      p += snprintf (str + p, sizeof(str) - p, " %s;", param1 & 0x80 ? "Tx & Rx Inhibition" : "Tx Inhibition");
+    else if (cmd == 4)
+      p += snprintf (str + p, sizeof(str) - p, " %s; Transmission Duration: %d s;", param1 & 0x80 ? "Silence Mode" : "Normal Mode", param2);
+    if (delivery) p += snprintf (str + p, sizeof(str) - p, " Confirmed;");
+  }
+  if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
+  {
+    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[72], 2);
+    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC",
+                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[77], 19)));
+  }
+  if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
+  if (mt == 0x35)
+  {
+    uint8_t cause = (uint8_t)ConvertBitIntoBytes(&Message[64], 8);
+    snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_SS_To_Str(cause), cause);
+  }
 
   fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
 
@@ -3487,3 +3591,41 @@ char * NXDN_Cause_SS_To_Str(uint8_t Cause)
 
   return Ptr;
 } /* End NXDN_Cause_SS_To_Str() */
+
+//1-A Table 6.5-21
+char * NXDN_Status_To_Str(uint8_t Status)
+{
+  char * Ptr = NULL;
+
+  switch(Status)
+  {
+    case 0x00: Ptr = "Null Status";                       break;
+    case 0xD0: Ptr = "Paging";                            break;
+    case 0xE0: Ptr = "Emergency";                         break;
+    case 0xE1: Ptr = "Emergency by Man-down";             break;
+    case 0xE2: Ptr = "Emergency Termination";             break;
+    case 0xE3: Ptr = "Emergency by Stationary Detection"; break;
+    case 0xE4: Ptr = "Emergency by Motion Detection";     break;
+    case 0xE5: Ptr = "Emergency by Lone Worker";          break;
+    default:   Ptr = Status <= 0xCF ? "User definable" : "Reserved"; break;
+  }
+
+  return Ptr;
+} /* End NXDN_Status_To_Str() */
+
+//1-A Table 6.5-22
+char * NXDN_Control_Command_To_Str(uint8_t Command)
+{
+  char * Ptr = NULL;
+
+  switch(Command)
+  {
+    case 0x00: Ptr = "Stun";           break;
+    case 0x01: Ptr = "Revival";        break;
+    case 0x02: Ptr = "Kill";           break;
+    case 0x04: Ptr = "Remote Monitor"; break;
+    default:   Ptr = "Reserved";       break;
+  }
+
+  return Ptr;
+} /* End NXDN_Control_Command_To_Str() */
