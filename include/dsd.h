@@ -1346,6 +1346,7 @@ char * NXDN_Cause_VD_To_Str(uint8_t Cause);
 char * NXDN_Cause_SS_To_Str(uint8_t Cause);
 char * NXDN_Status_To_Str(uint8_t Status);
 char * NXDN_Control_Command_To_Str(uint8_t Command);
+char * NXDN_Control_Command_2_To_Str(uint8_t Command);
 //added these
 void NXDN_decode_Prop(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_Alias(dsd_opts * opts, dsd_state * state, uint8_t * Message);
@@ -1357,6 +1358,8 @@ void NXDN_decode_site_info(dsd_opts * opts, dsd_state * state, uint8_t * Message
 void nxdn_decode_dst_info(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_adj_site(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 uint32_t nxdn_location_sys_code (uint32_t location);
+int nxdn_location_id_option_str (char * str, size_t len, uint8_t * Message);
+int nxdn_digits_str (char * str, size_t len, uint8_t * Message, int count);
 int nxdn_outbound_repeat (char * str);
 void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_AUTH_INQ_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
@@ -1366,6 +1369,7 @@ void NXDN_decode_CALL_REC_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Mess
 void NXDN_decode_SDCALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_STAT_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+void NXDN_decode_REM_CON_E_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_iv(dsd_opts * opts, dsd_state * state, int type, uint8_t * Message);
 void nxdn_dcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);

@@ -173,9 +173,11 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
       NXDN_decode_REG_RESP(opts, state, ElementsContent);
       break;
 
-    //AUTH_INQ_REQ, AUTH_INQ_RESP
+    //AUTH_INQ_REQ, AUTH_INQ_RESP, AUTH_INQ_REQ2, AUTH_INQ_RESP2
     case 0x28:
     case 0x29:
+    case 0x2A:
+    case 0x2B:
       NXDN_decode_AUTH_INQ_REQ(opts, state, ElementsContent);
       break;
 
@@ -202,6 +204,12 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
     case 0x34:
     case 0x35:
       NXDN_decode_REM_CON_REQ(opts, state, ElementsContent);
+      break;
+
+    //REM_CON_E_REQ, REM_CON_E_RESP
+    case 0x36:
+    case 0x37:
+      NXDN_decode_REM_CON_E_REQ(opts, state, ElementsContent);
       break;
 
     //VCALL, TX_REL_EXT and TX_REL
@@ -1452,6 +1460,34 @@ uint32_t nxdn_location_sys_code (uint32_t location)
   return 0;
 }
 
+//1-A 6.5.16: Location ID Option[5] Location ID w/o Site Code[19]
+int nxdn_location_id_option_str (char * str, size_t len, uint8_t * Message)
+{
+  uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[0], 2);
+  uint32_t sys_code = nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[5], 19));
+  return snprintf (str, len, " %sSystem Code: %d;", related == 2 ? "SRC " : related == 1 ? "TGT " : "", sys_code);
+}
+
+//1-A Table 6.5-14: Digit[4] x count, max 32
+int nxdn_digits_str (char * str, size_t len, uint8_t * Message, int count)
+{
+  char digits[33]; int n = 0, ext = 0;
+  for (int i = 0; i < count; i++)
+  {
+    uint8_t d = (uint8_t)ConvertBitIntoBytes(&Message[i*4], 4);
+    if (d == 0) break;
+    if (d == 0xF) { ext = 1; continue; }
+    if (ext && d >= 1 && d <= 4) digits[n++] = 'A' + d - 1;
+    else if (d >= 1 && d <= 9)   digits[n++] = '0' + d;
+    else if (d == 0xA)           digits[n++] = '0';
+    else if (d == 0xB)           digits[n++] = '*';
+    else if (d == 0xC)           digits[n++] = '#';
+    ext = 0;
+  }
+  digits[n] = 0;
+  return n ? snprintf (str, len, " Digits: %s;", digits) : 0;
+}
+
 //1-C 16.2.1: Nr_ob interleaved repeats, Tr_ob max 500ms
 int nxdn_outbound_repeat (char * str)
 {
@@ -1480,36 +1516,33 @@ void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   uint8_t em = Message[8];
-  uint8_t hv = Message[9];
+  uint8_t gp = 0;
   uint8_t cause = 0;
-  uint16_t unit = 0, group = 0, vunit = 0, vgroup = 0;
+  uint16_t unit = 0, group = 0;
   uint32_t sys_code = 0;
   int has_cause = 1;
   const char * name;
 
-  if (mt == 0x24) //Option[8] Unit Group Cause [VGroup]
+  if (mt == 0x24) //Option[8] Unit Group Cause [Spare[5] LocationID w/o Site Code[19]]
   {
     name   = "Group Registration Response";
     unit   = (uint16_t)ConvertBitIntoBytes(&Message[16], 16);
     group  = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
     cause  = (uint8_t)ConvertBitIntoBytes(&Message[48], 8);
-    if (hv) vgroup = (uint16_t)ConvertBitIntoBytes(&Message[56], 16);
+    if (Message[9]) //H/V
+      sys_code = nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[61], 19));
   }
   else //Option[5] LocationID w/o Site Code[19] Unit ...
   {
     sys_code = nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[13], 19));
     unit = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
 
-    if (mt == 0x20) //Group Cause [VUnit VGroup]
+    if (mt == 0x20) //Group Cause
     {
       name  = "Registration Response";
+      gp    = Message[10];
       group = (uint16_t)ConvertBitIntoBytes(&Message[48], 16);
       cause = (uint8_t)ConvertBitIntoBytes(&Message[64], 8);
-      if (hv)
-      {
-        vunit  = (uint16_t)ConvertBitIntoBytes(&Message[72], 16);
-        vgroup = (uint16_t)ConvertBitIntoBytes(&Message[88], 16);
-      }
     }
     else if (mt == 0x22)
     {
@@ -1527,7 +1560,7 @@ void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d;", name, unit);
   if (group)     p += snprintf (str + p, sizeof(str) - p, " TGT: %d;", group);
   if (sys_code)  p += snprintf (str + p, sizeof(str) - p, " Home System Code: %d;", sys_code);
-  if (hv)        p += snprintf (str + p, sizeof(str) - p, " Visitor Unit ID: %d; Visitor Group ID: %d;", vunit, vgroup);
+  if (gp)        p += snprintf (str + p, sizeof(str) - p, " Priority mobile station;");
   if (em)        p += snprintf (str + p, sizeof(str) - p, " Emergency;");
   if (has_cause) snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_MM_To_Str(cause), cause);
 
@@ -1537,30 +1570,26 @@ void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
     watchdog_event_datacall (opts, state, unit, group, str, 0);
 }
 
-//1-A 6.4.2.8, 6.4.2.9: AUTH_INQ_REQ, AUTH_INQ_RESP
+//1-A 6.4.2.8 to 6.4.2.11: AUTH_INQ_REQ, AUTH_INQ_RESP, AUTH_INQ_REQ2, AUTH_INQ_RESP2
 void NXDN_decode_AUTH_INQ_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   uint8_t em = Message[8];
   uint8_t lid = Message[9];
+  uint8_t req = mt == 0x28 || mt == 0x2A;
   uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[16], 16);
   uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
-  int lid_pos = mt == 0x28 ? 64 : 104; //after Parameter[16] or Value[56]
+  const char * two = mt >= 0x2A ? " 2" : "";
 
   char str[200]; int p = 0;
-  if (mt == 0x28)
-    p += snprintf (str + p, sizeof(str) - p, "Authentication Inquiry Request; SRC: %d; TGT: %d; Authentication Parameter: %04X;",
-                   src, dst, (uint16_t)ConvertBitIntoBytes(&Message[48], 16));
+  if (req)
+    p += snprintf (str + p, sizeof(str) - p, "Authentication Inquiry Request%s; SRC: %d; TGT: %d; Authentication Parameter: %04X;",
+                   two, src, dst, (uint16_t)ConvertBitIntoBytes(&Message[48], 16));
   else
-    p += snprintf (str + p, sizeof(str) - p, "Authentication Inquiry Response; SRC: %d; TGT: %d; Authentication Value: %014llX;",
-                   src, dst, (unsigned long long)ConvertBitIntoBytes(&Message[48], 56));
+    p += snprintf (str + p, sizeof(str) - p, "Authentication Inquiry Response%s; SRC: %d; TGT: %d; Authentication Value: %014llX;",
+                   two, src, dst, (unsigned long long)ConvertBitIntoBytes(&Message[48], 56));
 
-  if (lid) //Location ID Option[5] Location ID w/o Site Code[19]
-  {
-    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[lid_pos], 2);
-    uint32_t sys_code = nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[lid_pos+5], 19));
-    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC", sys_code);
-  }
+  if (lid) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[req ? 64 : 104]);
   if (em) snprintf (str + p, sizeof(str) - p, " Emergency;");
 
   fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
@@ -1579,11 +1608,12 @@ void NXDN_CAC_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t * Messa
     NXDN_Elements_Content_decode(opts, state, 1, Message);
 }
 
-//1-A 6.4.1.20, 6.4.1.24, 6.4.1.28: VCALL_RESP, VCALL_CONN_RESP, DCALL_RESP
+//1-A 6.4.1.22, 6.4.1.26, 6.4.1.30: VCALL_RESP, VCALL_CONN_RESP, DCALL_RESP
 void NXDN_decode_CALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   uint8_t em = Message[8];
+  uint8_t hv = Message[9];
   uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
   uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
   uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
@@ -1596,6 +1626,7 @@ void NXDN_decode_CALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message
 
   char str[200]; int p = 0;
   p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s;", name, src, dst, NXDN_Call_Type_To_Str(call_type));
+  if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[64]);
   if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
   snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_VD_To_Str(cause), cause);
 
@@ -1605,42 +1636,33 @@ void NXDN_decode_CALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message
     watchdog_event_datacall (opts, state, src, dst, str, 0);
 }
 
-//1-A 6.4.1.21, 6.4.1.29: VCALL_REC_REQ, DCALL_REC_REQ
+//1-A 6.4.1.23, 6.4.1.31: VCALL_REC_REQ, DCALL_REC_REQ
 void NXDN_decode_CALL_REC_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   uint8_t em = Message[8];
-  uint8_t ii = Message[9];
-  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
-  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
-  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+  uint8_t hv = Message[9];
+  uint8_t supp = (uint8_t)ConvertBitIntoBytes(&Message[14], 2); //1-A Table 6.5-8
+  static uint16_t src, dst; //1st Message IDs, 2nd Message carries none
 
   char str[200]; int p = 0;
-  p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s;",
-                 mt == 0x02 ? "Voice Call Reception Request" : "Data Call Reception Request",
-                 src, dst, NXDN_Call_Type_To_Str(call_type));
-
-  if (mt == 0x02 && call_type == 6) //Digit[4] x 22, 1-A Table 6.5-13
+  if (mt == 0x02 && supp == 2) //Interconnect 2nd Message: Digit[4] x 32
   {
-    char digits[23]; int n = 0, ext = 0;
-    for (int i = 0; i < 22; i++)
-    {
-      uint8_t d = (uint8_t)ConvertBitIntoBytes(&Message[56+i*4], 4);
-      if (d == 0) break;
-      if (d == 0xF) { ext = 1; continue; }
-      if (ext && d >= 1 && d <= 4) digits[n++] = 'A' + d - 1;
-      else if (d >= 1 && d <= 9)   digits[n++] = '0' + d;
-      else if (d == 0xA)           digits[n++] = '0';
-      else if (d == 0xB)           digits[n++] = '*';
-      else if (d == 0xC)           digits[n++] = '#';
-      ext = 0;
-    }
-    digits[n] = 0;
-    if (n) p += snprintf (str + p, sizeof(str) - p, " Digits: %s;", digits);
+    p += snprintf (str + p, sizeof(str) - p, "Voice Call Reception Request (2nd Message); SRC: %d; TGT: %d;", src, dst);
+    p += nxdn_digits_str (str + p, sizeof(str) - p, &Message[16], 32);
   }
-  else if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
-    p += snprintf (str + p, sizeof(str) - p, " SRC System Code: %d;",
-                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[61], 19)));
+  else
+  {
+    uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+    src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+    dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+    p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s;",
+                   mt == 0x02 ? "Voice Call Reception Request" : "Data Call Reception Request",
+                   src, dst, NXDN_Call_Type_To_Str(call_type));
+    if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[56]);
+    if (mt == 0x02 && call_type == 6) //Digit[4] x 22, or x 16 after Location ID
+      p += nxdn_digits_str (str + p, sizeof(str) - p, &Message[hv ? 80 : 56], hv ? 16 : 22);
+  }
   if (em) snprintf (str + p, sizeof(str) - p, " Emergency;");
 
   fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
@@ -1653,7 +1675,7 @@ void NXDN_decode_CALL_REC_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Mess
 void NXDN_decode_SDCALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   uint8_t em = Message[8];
-  uint8_t ii = Message[9];
+  uint8_t hv = Message[9];
   uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
   uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
   uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
@@ -1661,12 +1683,7 @@ void NXDN_decode_SDCALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Messa
 
   char str[200]; int p = 0;
   p += snprintf (str + p, sizeof(str) - p, "Short Data Call Response; SRC: %d; TGT: %d; %s;", src, dst, NXDN_Call_Type_To_Str(call_type));
-  if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
-  {
-    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[64], 2);
-    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC",
-                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[69], 19)));
-  }
+  if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[64]);
   if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
   snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_SS_To_Str(cause), cause);
 
@@ -1681,7 +1698,7 @@ void NXDN_decode_STAT_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   uint8_t em = Message[8];
-  uint8_t ii = Message[9];
+  uint8_t hv = Message[9];
   uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
   uint8_t delivery = Message[20]; //Status Call Option bit 3
   uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
@@ -1702,12 +1719,7 @@ void NXDN_decode_STAT_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
     p += snprintf (str + p, sizeof(str) - p, " Status: %d (%s);", status, NXDN_Status_To_Str(status));
   }
   if (mt == 0x32 && delivery) p += snprintf (str + p, sizeof(str) - p, " Confirmed;");
-  if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
-  {
-    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[lid_pos], 2);
-    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC",
-                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[lid_pos+5], 19)));
-  }
+  if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[lid_pos]);
   if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
   if (mt == 0x31 || mt == 0x33)
   {
@@ -1726,7 +1738,7 @@ void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Messa
 {
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   uint8_t em = Message[8];
-  uint8_t ii = Message[9];
+  uint8_t hv = Message[9];
   uint8_t gu = Message[16];
   uint8_t delivery = Message[18];
   uint8_t cmd = (uint8_t)ConvertBitIntoBytes(&Message[19], 5);
@@ -1737,7 +1749,7 @@ void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Messa
   p += snprintf (str + p, sizeof(str) - p, "%s; SRC: %d; TGT: %d; %s; %s;",
                  mt == 0x34 ? "Remote Control Request" : "Remote Control Response",
                  src, dst, gu ? "Unit ID" : "Group ID", NXDN_Control_Command_To_Str(cmd));
-  if (mt == 0x34) //1-A Table 6.5-23
+  if (mt == 0x34) //1-A Table 6.5-24
   {
     uint8_t param1 = (uint8_t)ConvertBitIntoBytes(&Message[56], 8);
     uint8_t param2 = (uint8_t)ConvertBitIntoBytes(&Message[64], 8);
@@ -1747,12 +1759,7 @@ void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Messa
       p += snprintf (str + p, sizeof(str) - p, " %s; Transmission Duration: %d s;", param1 & 0x80 ? "Silence Mode" : "Normal Mode", param2);
     if (delivery) p += snprintf (str + p, sizeof(str) - p, " Confirmed;");
   }
-  if (ii) //Location ID Option[5] Location ID w/o Site Code[19]
-  {
-    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[72], 2);
-    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC",
-                   nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[77], 19)));
-  }
+  if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[72]);
   if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
   if (mt == 0x35)
   {
@@ -1764,6 +1771,41 @@ void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Messa
 
   if (!nxdn_outbound_repeat (str))
     watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.1.19, 6.4.1.20: REM_CON_E_REQ, REM_CON_E_RESP
+void NXDN_decode_REM_CON_E_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t hv = Message[9];
+  uint8_t cmd = (uint8_t)ConvertBitIntoBytes(&Message[19], 5);
+  uint16_t unit = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+
+  char str[200]; int p = 0;
+  if (mt == 0x36) //Unit Parameter[16] Value[56] [Location ID]
+  {
+    p += snprintf (str + p, sizeof(str) - p, "Remote Control Request with ESN; TGT: %d; %s; Authentication Parameter: %04X; Authentication Value: %014llX;",
+                   unit, NXDN_Control_Command_2_To_Str(cmd), (uint16_t)ConvertBitIntoBytes(&Message[40], 16),
+                   (unsigned long long)ConvertBitIntoBytes(&Message[56], 56));
+    if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[112]);
+  }
+  else //Unit Spare[8] Cause[8] [Location ID]
+  {
+    p += snprintf (str + p, sizeof(str) - p, "Remote Control Response with ESN; SRC: %d; %s;", unit, NXDN_Control_Command_2_To_Str(cmd));
+    if (hv) p += nxdn_location_id_option_str (str + p, sizeof(str) - p, &Message[56]);
+  }
+  if (em) p += snprintf (str + p, sizeof(str) - p, " Emergency;");
+  if (mt == 0x37)
+  {
+    uint8_t cause = (uint8_t)ConvertBitIntoBytes(&Message[48], 8);
+    snprintf (str + p, sizeof(str) - p, " %s (%02X);", NXDN_Cause_SS_To_Str(cause), cause);
+  }
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, mt == 0x37 ? unit : 0, mt == 0x36 ? unit : 0, str, 0);
 }
 
 void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
@@ -3393,7 +3435,7 @@ int nxdn_dcall_data(dsd_opts * opts, dsd_state * state, int type, uint8_t * Mess
   
 }
 
-//1-A Table 6.5-8, 1-E Table 6.6-15
+//1-A Table 6.5-9, 1-E Table 6.6-16
 char * NXDN_Call_Type_To_Str(uint8_t CallType)
 {
   char * Ptr = NULL;
@@ -3498,7 +3540,7 @@ char * NXDN_Cipher_Type_To_Str(uint8_t CipherType)
   return Ptr;
 } /* End NXDN_Cipher_Type_To_Str() */
 
-//1-A Table 6.5-27
+//1-A Table 6.5-28
 char * NXDN_Cause_MM_To_Str(uint8_t Cause)
 {
   char * Ptr = NULL;
@@ -3510,6 +3552,10 @@ char * NXDN_Cause_MM_To_Str(uint8_t Cause)
     case 0x05: Ptr = "Location is accepted, but Group is refused";             break;
     case 0x06: Ptr = "Registration is failed";                                 break;
     case 0x08: Ptr = "Registration is refused";                                break;
+    case 0x21: Ptr = "Registration is accepted (valid ESN)";                   break;
+    case 0x24: Ptr = "Location is accepted, but Group is failed (valid ESN)";  break;
+    case 0x25: Ptr = "Location is accepted, but Group is refused (valid ESN)"; break;
+    case 0x28: Ptr = "Registration is refused (invalid ESN)";                  break;
     case 0x51: Ptr = "Network failure";                                        break;
     case 0x52: Ptr = "Temporary failure";                                      break;
     case 0x53: Ptr = "Equipment congestion";                                   break;
@@ -3525,7 +3571,7 @@ char * NXDN_Cause_MM_To_Str(uint8_t Cause)
   return Ptr;
 } /* End NXDN_Cause_MM_To_Str() */
 
-//1-A Table 6.5-28
+//1-A Table 6.5-29
 char * NXDN_Cause_VD_To_Str(uint8_t Cause)
 {
   char * Ptr = NULL;
@@ -3572,7 +3618,7 @@ char * NXDN_Cause_VD_To_Str(uint8_t Cause)
   return Ptr;
 } /* End NXDN_Cause_VD_To_Str() */
 
-//1-A Table 6.5-29: VD values without queue and queuing interruption
+//1-A Table 6.5-30: VD values without queue and queuing interruption
 char * NXDN_Cause_SS_To_Str(uint8_t Cause)
 {
   char * Ptr = NULL;
@@ -3592,7 +3638,7 @@ char * NXDN_Cause_SS_To_Str(uint8_t Cause)
   return Ptr;
 } /* End NXDN_Cause_SS_To_Str() */
 
-//1-A Table 6.5-21
+//1-A Table 6.5-22
 char * NXDN_Status_To_Str(uint8_t Status)
 {
   char * Ptr = NULL;
@@ -3613,7 +3659,7 @@ char * NXDN_Status_To_Str(uint8_t Status)
   return Ptr;
 } /* End NXDN_Status_To_Str() */
 
-//1-A Table 6.5-22
+//1-A Table 6.5-23
 char * NXDN_Control_Command_To_Str(uint8_t Command)
 {
   char * Ptr = NULL;
@@ -3629,3 +3675,20 @@ char * NXDN_Control_Command_To_Str(uint8_t Command)
 
   return Ptr;
 } /* End NXDN_Control_Command_To_Str() */
+
+//1-A Table 6.5-45
+char * NXDN_Control_Command_2_To_Str(uint8_t Command)
+{
+  char * Ptr = NULL;
+
+  switch(Command)
+  {
+    case 0x00: Ptr = "Stun (Tx&Rx Inhibition)"; break;
+    case 0x01: Ptr = "Revival";                 break;
+    case 0x02: Ptr = "Kill";                    break;
+    case 0x03: Ptr = "Stun (Tx Inhibition)";    break;
+    default:   Ptr = "Reserved";                break;
+  }
+
+  return Ptr;
+} /* End NXDN_Control_Command_2_To_Str() */
