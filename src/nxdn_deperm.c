@@ -785,7 +785,20 @@ void nxdn_cac(dsd_opts * opts, dsd_state * state, uint8_t * bits)
 	if (crc != 0) cac_fail++;
 	else cac_fail = 0;
 
-	if (crc == 0) NXDN_Elements_Content_decode(opts, state, 1, cac_message_buffer);
+	if (crc == 0)
+	{
+		//1-A 6.3.1: Structure bit 0, Dual Message Format, 9 octets per message
+		uint8_t dual = viterbi_bits[1];
+		uint8_t second_message_buffer[147];
+		memset (second_message_buffer, 0, sizeof(second_message_buffer));
+		if (dual)
+		{
+			memcpy (second_message_buffer, cac_message_buffer+72, 72);
+			memset (cac_message_buffer+72, 0, sizeof(cac_message_buffer)-72);
+		}
+		NXDN_Elements_Content_decode(opts, state, 1, cac_message_buffer);
+		if (dual) NXDN_Elements_Content_decode(opts, state, 1, second_message_buffer);
+	}
 
 	if (opts->payload == 1)
 	{
