@@ -331,6 +331,21 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
     case 0x10:
       break;
 
+    //DCALL_ACK
+    case 0x0C:
+      NXDN_decode_DCALL_ACK(opts, state, ElementsContent);
+      break;
+
+    //HEAD_DLY
+    case 0x0F:
+      NXDN_decode_HEAD_DLY(opts, state, ElementsContent);
+      break;
+
+    //FAIL_STAT_INFO
+    case 0x1C:
+      NXDN_decode_FAIL_STAT_INFO(opts, state, ElementsContent);
+      break;
+
     //VCALL_IV
     case 0x03:
       NXDN_decode_VCALL_IV(opts, state, ElementsContent);
@@ -1808,6 +1823,69 @@ void NXDN_decode_REM_CON_E_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Mes
     watchdog_event_datacall (opts, state, mt == 0x37 ? unit : 0, mt == 0x36 ? unit : 0, str, 0);
 }
 
+//1-A 6.4.1.5: DCALL_ACK
+void NXDN_decode_DCALL_ACK(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+  uint8_t class_type = (uint8_t)ConvertBitIntoBytes(&Message[58], 5); //Response Information Class[2] Type[3]
+  uint16_t rx_frag = (uint16_t)ConvertBitIntoBytes(&Message[63], 9);
+  uint16_t error_blocks = (uint16_t)ConvertBitIntoBytes(&Message[72], 16);
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "Data Call Acknowledge; SRC: %d; TGT: %d; %s; %s; RX Fragment Count: %d;",
+                 src, dst, NXDN_Call_Type_To_Str(call_type), NXDN_Response_Class_Type_To_Str(class_type), rx_frag);
+  if (error_blocks) snprintf (str + p, sizeof(str) - p, " Error Block Flag: %04X;", error_blocks);
+
+  fprintf (stderr, "%s\n %s%s", KCYN, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
+}
+
+//1-A 6.4.1.8: HEAD_DLY, Delay Count decrements each frame
+void NXDN_decode_HEAD_DLY(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  UNUSED2(opts, state);
+  uint8_t call_type = (uint8_t)ConvertBitIntoBytes(&Message[16], 3);
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
+  uint16_t delay = (uint16_t)ConvertBitIntoBytes(&Message[56], 16);
+
+  fprintf (stderr, "%s\n Header Delay; SRC: %d; TGT: %d; %s; Delay Count: %d;%s", KCYN, src, dst, NXDN_Call_Type_To_Str(call_type), delay, KNRM);
+}
+
+//1-A 6.4.3.5: FAIL_STAT_INFO
+void NXDN_decode_FAIL_STAT_INFO(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint32_t location_id = (uint32_t)ConvertBitIntoBytes(&Message[8], 24);
+  uint8_t condition = (uint8_t)ConvertBitIntoBytes(&Message[32], 8);
+  uint8_t timer = (uint8_t)ConvertBitIntoBytes(&Message[40], 6); //1-A Figure 6.4-73
+
+  fprintf (stderr, "%s", KRED);
+  nxdn_location_id_handler (state, location_id, 0);
+
+  char str[200]; int p = 0;
+  p += snprintf (str + p, sizeof(str) - p, "Failure Status Information; System Code: %d; Site Code: %d;",
+                 state->nxdn_location_sys_code, state->nxdn_location_site_code);
+  if (condition == 0x80)
+  {
+    int secs = NXDN_Call_Timer_To_Seconds(timer);
+    p += snprintf (str + p, sizeof(str) - p, " Fail-soft Mode;");
+    if (secs > 0)       snprintf (str + p, sizeof(str) - p, " Call Timer: %d s;", secs);
+    else if (secs == 0) snprintf (str + p, sizeof(str) - p, " Call Timer: Unspecified (SU dependent);");
+    else                snprintf (str + p, sizeof(str) - p, " Call Timer: Reserved (%02X);", timer);
+  }
+  else
+    snprintf (str + p, sizeof(str) - p, " Reserved (%02X);", condition);
+
+  fprintf (stderr, "\n %s%s", str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, 0, 0, str, 0);
+}
+
 void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
   UNUSED(opts);
@@ -2919,12 +2997,18 @@ void nxdn_sdcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message)
     fprintf (stderr, "Source: %d-%d; Target: %d-%d; ", source_ch, source, target_ch, target);
   fprintf (stderr, "%s %s %s ", NXDN_Call_Type_To_Str(call_type), dcall_string, duplex_string);
 
-  //TODO: Decode cc_option
-
   //next line
   fprintf (stderr, "\n ");
 
-  fprintf (stderr, "Blocks: %d; Padding: %d; ", block_count, pad_bytes);
+  fprintf (stderr, "Blocks: %d; Padding: %d; ", block_count + 1, pad_bytes);
+
+  if (cc_option & 0x80) fprintf (stderr, "Emergency; ");
+  if (cc_option & 0x40) //1-A Figure 6.4-9: H/V, Location ID after Packet Information, UPCH only
+  {
+    char loc[40];
+    nxdn_location_id_option_str (loc, sizeof(loc), Message+80);
+    fprintf (stderr, "%s ", loc+1);
+  }
 
   if (cipher)
   {
@@ -2956,10 +3040,8 @@ void nxdn_sdcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   //clear storage
   memset(state->dmr_pdu_sf[0], 0, sizeof(state->dmr_pdu_sf[0]));
 
-  //set header block expected value
-  if (block_count > 0)
-    state->data_header_blocks[0] = block_count;
-  else state->data_header_blocks[0] = 1;
+  //1-A Table 6.5-15: Block Count 0 to 15 = 1 to 16 blocks, last block number
+  state->data_header_blocks[0] = block_count;
 
   //set padding bytes (needed for ks application, crc check, valid len of data)
   state->data_header_padding[0] = pad_bytes;
@@ -3055,7 +3137,7 @@ void nxdn_dcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   //next line
   fprintf (stderr, "\n ");
 
-  fprintf (stderr, "Blocks: %d; Padding: %d; TX Frag: %d; ", block_count, pad_bytes, tx_frag_count);
+  fprintf (stderr, "Blocks: %d; Padding: %d; TX Frag: %d; ", block_count + 1, pad_bytes, tx_frag_count);
 
   if (cipher)
   {
@@ -3106,10 +3188,8 @@ void nxdn_dcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   //clear storage
   memset(state->dmr_pdu_sf[0], 0, sizeof(state->dmr_pdu_sf[0]));
 
-  //set header block expected value
-  if (block_count > 0)
-    state->data_header_blocks[0] = block_count;
-  else state->data_header_blocks[0] = 1;
+  //1-A Table 6.5-15: Block Count 0 to 15 = 1 to 16 blocks, last block number
+  state->data_header_blocks[0] = block_count;
 
   //set padding bytes (needed for ks application, crc check, valid len of data)
   state->data_header_padding[0] = pad_bytes;
@@ -3692,3 +3772,30 @@ char * NXDN_Control_Command_2_To_Str(uint8_t Command)
 
   return Ptr;
 } /* End NXDN_Control_Command_2_To_Str() */
+
+//1-A Table 6.5-19: Class[2] Type[3]
+char * NXDN_Response_Class_Type_To_Str(uint8_t ClassType)
+{
+  char * Ptr = NULL;
+
+  switch(ClassType)
+  {
+    case 0x01: Ptr = "ACK (Reception Successful)";          break;
+    case 0x09: Ptr = "ACK_S (Request for Selective Retry)"; break;
+    case 0x19: Ptr = "NACK (Request for Full Retry)";       break;
+    case 0x1A: Ptr = "NACK (Memory Full)";                  break;
+    case 0x1B: Ptr = "NACK (abort)";                        break;
+    default:   Ptr = "Reserved";                            break;
+  }
+
+  return Ptr;
+} /* End NXDN_Response_Class_Type_To_Str() */
+
+//1-A Table 6.5-34: 0 unspecified, -1 reserved
+int NXDN_Call_Timer_To_Seconds(uint8_t CallTimer)
+{
+  if (CallTimer == 0)  return 0;
+  if (CallTimer <= 12) return CallTimer * 15;
+  if (CallTimer <= 26) return 180 + (CallTimer - 12) * 30;
+  return -1;
+} /* End NXDN_Call_Timer_To_Seconds() */

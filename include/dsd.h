@@ -1347,6 +1347,8 @@ char * NXDN_Cause_SS_To_Str(uint8_t Cause);
 char * NXDN_Status_To_Str(uint8_t Status);
 char * NXDN_Control_Command_To_Str(uint8_t Command);
 char * NXDN_Control_Command_2_To_Str(uint8_t Command);
+char * NXDN_Response_Class_Type_To_Str(uint8_t ClassType);
+int NXDN_Call_Timer_To_Seconds(uint8_t CallTimer);
 //added these
 void NXDN_decode_Prop(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_Alias(dsd_opts * opts, dsd_state * state, uint8_t * Message);
@@ -1370,6 +1372,9 @@ void NXDN_decode_SDCALL_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Messa
 void NXDN_decode_STAT_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_REM_CON_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_REM_CON_E_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+void NXDN_decode_DCALL_ACK(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+void NXDN_decode_HEAD_DLY(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+void NXDN_decode_FAIL_STAT_INFO(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_iv(dsd_opts * opts, dsd_state * state, int type, uint8_t * Message);
 void nxdn_dcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);
