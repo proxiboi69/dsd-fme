@@ -1352,7 +1352,10 @@ void NXDN_decode_srv_info(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 void NXDN_decode_site_info(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_decode_dst_info(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_adj_site(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+uint32_t nxdn_location_sys_code (uint32_t location);
+int nxdn_outbound_repeat (char * str);
 void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message);
+void NXDN_decode_AUTH_INQ_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void nxdn_sdcall_iv(dsd_opts * opts, dsd_state * state, int type, uint8_t * Message);
 void nxdn_dcall_header(dsd_opts * opts, dsd_state * state, uint8_t * Message);

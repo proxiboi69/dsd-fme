@@ -173,6 +173,12 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
       NXDN_decode_REG_RESP(opts, state, ElementsContent);
       break;
 
+    //AUTH_INQ_REQ, AUTH_INQ_RESP
+    case 0x28:
+    case 0x29:
+      NXDN_decode_AUTH_INQ_REQ(opts, state, ElementsContent);
+      break;
+
     //VCALL, TX_REL_EXT and TX_REL
     case 0x07: //TX_REL_EXT
     case 0x08: //TX_REL
@@ -1410,6 +1416,40 @@ void NXDN_decode_adj_site(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 
 }
 
+//1-A 6.5.2: Location ID w/o Site Code[19]
+uint32_t nxdn_location_sys_code (uint32_t location)
+{
+  uint32_t loc = location << 5;
+  uint8_t cat = loc >> 22;
+  if (cat == 0) return (loc >> 12) & 0x3FF;
+  if (cat == 2) return (loc >> 8) & 0x3FFF;
+  if (cat == 1) return (loc >> 5) & 0x1FFFF;
+  return 0;
+}
+
+//1-C 16.2.1: Nr_ob interleaved repeats, Tr_ob max 500ms
+int nxdn_outbound_repeat (char * str)
+{
+  static char seen[25][200]; //1-A 6.2.2.1, 4.4: 2 msg x 500ms / 40ms
+  static int64_t seen_ms[25];
+  static int next;
+  struct timespec ts;
+  clock_gettime (CLOCK_MONOTONIC, &ts);
+  int64_t now = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+  for (int i = 0; i < 25; i++)
+  {
+    if (now - seen_ms[i] <= 500 && strcmp (str, seen[i]) == 0)
+    {
+      seen_ms[i] = now;
+      return 1;
+    }
+  }
+  snprintf (seen[next], sizeof(seen[next]), "%s", str);
+  seen_ms[next] = now;
+  next = (next + 1) % 25;
+  return 0;
+}
+
 //1-A 6.4.2: REG_RESP, REG_C_RESP, REG_COMM, GRP_REG_RESP
 void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 {
@@ -1432,11 +1472,7 @@ void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   }
   else //Option[5] LocationID w/o Site Code[19] Unit ...
   {
-    uint32_t loc = (uint32_t)ConvertBitIntoBytes(&Message[13], 19) << 5;
-    uint8_t cat = loc >> 22;
-    if      (cat == 0) sys_code = (loc >> 12) & 0x3FF;
-    else if (cat == 2) sys_code = (loc >> 8) & 0x3FFF;
-    else if (cat == 1) sys_code = (loc >> 5) & 0x1FFFF;
+    sys_code = nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[13], 19));
     unit = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
 
     if (mt == 0x20) //Group Cause [VUnit VGroup]
@@ -1472,26 +1508,40 @@ void NXDN_decode_REG_RESP(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 
   fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
 
-  //1-C 16.2.1: Nr_ob interleaved repeats, Tr_ob max 500ms
-  static char seen[25][200]; //1-A 6.2.2.1, 4.4: 2 msg x 500ms / 40ms
-  static int64_t seen_ms[25];
-  static int next;
-  struct timespec ts;
-  clock_gettime (CLOCK_MONOTONIC, &ts);
-  int64_t now = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-  for (int i = 0; i < 25; i++)
-  {
-    if (now - seen_ms[i] <= 500 && strcmp (str, seen[i]) == 0)
-    {
-      seen_ms[i] = now;
-      return;
-    }
-  }
-  strcpy (seen[next], str);
-  seen_ms[next] = now;
-  next = (next + 1) % 25;
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, unit, group, str, 0);
+}
 
-  watchdog_event_datacall (opts, state, unit, group, str, 0);
+//1-A 6.4.2.8, 6.4.2.9: AUTH_INQ_REQ, AUTH_INQ_RESP
+void NXDN_decode_AUTH_INQ_REQ(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+{
+  uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
+  uint8_t em = Message[8];
+  uint8_t lid = Message[9];
+  uint16_t src = (uint16_t)ConvertBitIntoBytes(&Message[16], 16);
+  uint16_t dst = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
+  int lid_pos = mt == 0x28 ? 64 : 104; //after Parameter[16] or Value[56]
+
+  char str[200]; int p = 0;
+  if (mt == 0x28)
+    p += snprintf (str + p, sizeof(str) - p, "Authentication Inquiry Request; SRC: %d; TGT: %d; Authentication Parameter: %04X;",
+                   src, dst, (uint16_t)ConvertBitIntoBytes(&Message[48], 16));
+  else
+    p += snprintf (str + p, sizeof(str) - p, "Authentication Inquiry Response; SRC: %d; TGT: %d; Authentication Value: %014llX;",
+                   src, dst, (unsigned long long)ConvertBitIntoBytes(&Message[48], 56));
+
+  if (lid) //Location ID Option[5] Location ID w/o Site Code[19]
+  {
+    uint8_t related = (uint8_t)ConvertBitIntoBytes(&Message[lid_pos], 2);
+    uint32_t sys_code = nxdn_location_sys_code ((uint32_t)ConvertBitIntoBytes(&Message[lid_pos+5], 19));
+    p += snprintf (str + p, sizeof(str) - p, " %s System Code: %d;", related == 1 ? "TGT" : "SRC", sys_code);
+  }
+  if (em) snprintf (str + p, sizeof(str) - p, " Emergency;");
+
+  fprintf (stderr, "%s\n %s%s", KYEL, str, KNRM);
+
+  if (!nxdn_outbound_repeat (str))
+    watchdog_event_datacall (opts, state, src, dst, str, 0);
 }
 
 void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
