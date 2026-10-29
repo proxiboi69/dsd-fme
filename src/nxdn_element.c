@@ -130,7 +130,7 @@ void NXDN_Elements_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t Cr
 
     //DCALL_ASSGN
     case 0x0E:
-      NXDN_decode_VCALL_ASSGN(opts, state, ElementsContent);
+      NXDN_decode_VCALL_ASSGN(opts, state, ElementsContent, 0);
       break;
 
     //PROP_FORM 0x3F
@@ -514,7 +514,7 @@ void nxdn_ca_info_handler (dsd_state * state, uint32_t ca_info)
 
 //end sub-element handlers
 
-void NXDN_decode_VCALL_ASSGN(dsd_opts * opts, dsd_state * state, uint8_t * Message)
+void NXDN_decode_VCALL_ASSGN(dsd_opts * opts, dsd_state * state, uint8_t * Message, uint8_t rcch)
 {
   //just using 'short form' M only data, not the optional data
   uint8_t  CCOption = 0;
@@ -524,7 +524,6 @@ void NXDN_decode_VCALL_ASSGN(dsd_opts * opts, dsd_state * state, uint8_t * Messa
   uint16_t DestinationID = 0;
   uint8_t  CallTimer = 0;
   uint16_t Channel = 0;
-  UNUSED(CallTimer);
 
   uint8_t  DuplexMode[32] = {0};
   uint8_t  TransmissionMode[32] = {0};
@@ -569,7 +568,7 @@ void NXDN_decode_VCALL_ASSGN(dsd_opts * opts, dsd_state * state, uint8_t * Messa
   DestinationID = (uint16_t)ConvertBitIntoBytes(&Message[40], 16);
   state->NxdnElementsContent.DestinationID = DestinationID;
 
-  /* Decode "Call Timer" */ //unsure of format of call timer, not required info for trunking
+  /* Decode "Call Timer" */
   CallTimer = (uint8_t)ConvertBitIntoBytes(&Message[56], 6);
 
   /* Decode "Channel" */
@@ -581,6 +580,19 @@ void NXDN_decode_VCALL_ASSGN(dsd_opts * opts, dsd_state * state, uint8_t * Messa
     bw  = (uint8_t)ConvertBitIntoBytes(&Message[62], 2);
     OFN = (uint16_t)ConvertBitIntoBytes(&Message[64], 16);
     IFN = (uint16_t)ConvertBitIntoBytes(&Message[80], 16);
+  }
+
+  //1-A Figure 6.4-40, 6.4-50: RTCH DFA DUP has no Source Unit ID
+  if (!rcch && state->nxdn_rcn == 1 && (MessageType == 0x05 || MessageType == 0x0D))
+  {
+    SourceUnitID  = 0;
+    DestinationID = (uint16_t)ConvertBitIntoBytes(&Message[24], 16);
+    CallTimer     = (uint8_t)ConvertBitIntoBytes(&Message[40], 6);
+    bw            = (uint8_t)ConvertBitIntoBytes(&Message[46], 2);
+    OFN           = (uint16_t)ConvertBitIntoBytes(&Message[48], 16);
+    IFN           = (uint16_t)ConvertBitIntoBytes(&Message[64], 16);
+    state->NxdnElementsContent.SourceUnitID = SourceUnitID;
+    state->NxdnElementsContent.DestinationID = DestinationID;
   }
 
   //Part 1-E Common Air Interface Ver.1.3 - 6.4.1.23. Voice Call Assignment (VCALL_ASSGN)
@@ -634,6 +646,16 @@ void NXDN_decode_VCALL_ASSGN(dsd_opts * opts, dsd_state * state, uint8_t * Messa
     fprintf(stderr, "- Channel [%03X][%04d] ", Channel & 0x3FF, Channel & 0x3FF);
   if (state->nxdn_rcn == 1)
     fprintf(stderr, "- DFA Channel [%04X][%05d] ", OFN, OFN);
+
+  int call_secs = NXDN_Call_Timer_To_Seconds(CallTimer);
+  if (call_secs > 0) fprintf (stderr, "- Call Timer: %d s ", call_secs);
+
+  if (rcch && (CCOption & 0x40)) //Location ID after Channel or IFN
+  {
+    char loc[40];
+    nxdn_location_id_option_str (loc, sizeof(loc), Message + (state->nxdn_rcn ? 96 : 72));
+    fprintf (stderr, "-%s ", loc);
+  }
 
   //test VCALL_ASSGN_DUP, if no voice sync activity (by trunk_hangtime), then convert to assgn and allow tuning
   //VCALL_ASSGN_DUP has been seen in the middle of calls, but also on the tail end instead of a TX_REL or DISC
@@ -1619,6 +1641,11 @@ void NXDN_CAC_Content_decode(dsd_opts * opts, dsd_state * state, uint8_t * Messa
   uint8_t mt = (uint8_t)ConvertBitIntoBytes(&Message[2], 6);
   if (mt == 0x01 || mt == 0x03 || mt == 0x09)
     NXDN_decode_CALL_RESP(opts, state, Message);
+  else if (mt == 0x04 || mt == 0x05 || mt == 0x0D || mt == 0x0E) //RCCH format, 1-A Figure 6.4-37
+  {
+    nxdn_message_type (opts, state, (uint8_t)ConvertBitIntoBytes(&Message[0], 8));
+    NXDN_decode_VCALL_ASSGN(opts, state, Message, 1);
+  }
   else
     NXDN_Elements_Content_decode(opts, state, 1, Message);
 }
@@ -1949,12 +1976,13 @@ void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
     DestinationID = DestinationID & 0x7FF;
   }
 
-  /* Decode the "Cipher Type" */
-  CipherType = (uint8_t)ConvertBitIntoBytes(&Message[56], 2);
+  //1-A 6.4.1.1: Cipher Type and Key ID in VCALL only, octet 7 differs in TX_REL_EX and DISC
+  if (MessageType == 0x1)
+  {
+    CipherType = (uint8_t)ConvertBitIntoBytes(&Message[56], 2);
+    KeyID = (uint8_t)ConvertBitIntoBytes(&Message[58], 6);
+  }
   state->NxdnElementsContent.CipherType = CipherType;
-
-  /* Decode the "Key ID" */
-  KeyID = (uint8_t)ConvertBitIntoBytes(&Message[58], 6);
   state->NxdnElementsContent.KeyID = KeyID;
 
   fprintf (stderr, "\n ");
@@ -1996,6 +2024,20 @@ void NXDN_decode_VCALL(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 
   //Channel here appears to be the prefix or home channel of the caller, not necessarily the channel the call is occuring on
   if (idas) fprintf (stderr, "- Prefix Ch: %d ", rep1);
+
+  if (MessageType == 0x07 && Message[56]) fprintf (stderr, "- TX "); //1-A Figure 6.4-7
+
+  if (MessageType == 0x11) //1-A Figure 6.4-53: Cause (DISC) [Location ID]
+  {
+    uint8_t cause = (uint8_t)ConvertBitIntoBytes(&Message[56], 8);
+    fprintf (stderr, "- %s (%02X) ", NXDN_Cause_DISC_To_Str(cause), cause);
+    if (CCOption & 0x40)
+    {
+      char loc[40];
+      nxdn_location_id_option_str (loc, sizeof(loc), Message+64);
+      fprintf (stderr, "-%s ", loc);
+    }
+  }
 
   fprintf (stderr, "%s", KNRM);
 
@@ -3717,6 +3759,26 @@ char * NXDN_Cause_SS_To_Str(uint8_t Cause)
 
   return Ptr;
 } /* End NXDN_Cause_SS_To_Str() */
+
+//1-A Table 6.5-32: own Normal values, Resource/Service/Procedure as VD
+char * NXDN_Cause_DISC_To_Str(uint8_t Cause)
+{
+  char * Ptr = NULL;
+  uint8_t c = Cause & 0x7F;
+
+  switch(c)
+  {
+    case 0x10: Ptr = "Disconnected by a user";      break;
+    case 0x11: Ptr = "Disconnected by PSTN";        break;
+    case 0x14: Ptr = "Disconnected by timer";       break;
+    case 0x1F: Ptr = "Other disconnect from SU";    break;
+    case 0x20: Ptr = "Disconnected by timer of TC"; break;
+    case 0x2F: Ptr = "Other disconnect from TC";    break;
+    default:   Ptr = c >= 0x50 ? NXDN_Cause_VD_To_Str(c) : "Reserved"; break;
+  }
+
+  return Ptr;
+} /* End NXDN_Cause_DISC_To_Str() */
 
 //1-A Table 6.5-22
 char * NXDN_Status_To_Str(uint8_t Status)
