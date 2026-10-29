@@ -1535,18 +1535,18 @@ int nxdn_digits_str (char * str, size_t len, uint8_t * Message, int count)
   return n ? snprintf (str, len, " Digits: %s;", digits) : 0;
 }
 
-//1-C 16.2.1: Nr_ob interleaved repeats, Tr_ob max 500ms
+//1-C 16.2.1: Nr_ob interleaved repeats, Tr_ob not retained under load
 int nxdn_outbound_repeat (char * str)
 {
-  static char seen[25][200]; //1-A 6.2.2.1, 4.4: 2 msg x 500ms / 40ms
-  static int64_t seen_ms[25];
+  static char seen[100][200]; //1-A 6.2.2.1, 4.4: 2 msg x 2000ms / 40ms
+  static int64_t seen_ms[100];
   static int next;
   struct timespec ts;
   clock_gettime (CLOCK_MONOTONIC, &ts);
   int64_t now = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-  for (int i = 0; i < 25; i++)
+  for (int i = 0; i < 100; i++)
   {
-    if (now - seen_ms[i] <= 500 && strcmp (str, seen[i]) == 0)
+    if (now - seen_ms[i] <= 2000 && strcmp (str, seen[i]) == 0)
     {
       seen_ms[i] = now;
       return 1;
@@ -1554,7 +1554,7 @@ int nxdn_outbound_repeat (char * str)
   }
   snprintf (seen[next], sizeof(seen[next]), "%s", str);
   seen_ms[next] = now;
-  next = (next + 1) % 25;
+  next = (next + 1) % 100;
   return 0;
 }
 
