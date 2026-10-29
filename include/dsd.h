@@ -908,6 +908,9 @@ typedef struct
   char nxdn_location_category[14];
   uint32_t nxdn_location_sys_code;
   uint16_t nxdn_location_site_code;
+  uint16_t nxdn_svc_info;
+  uint8_t nxdn_version;
+  uint8_t nxdn_adj_sites;
 
   //channel access information
   uint8_t nxdn_rcn;
@@ -1350,6 +1353,7 @@ char * NXDN_Control_Command_To_Str(uint8_t Command);
 char * NXDN_Control_Command_2_To_Str(uint8_t Command);
 char * NXDN_Response_Class_Type_To_Str(uint8_t ClassType);
 int NXDN_Call_Timer_To_Seconds(uint8_t CallTimer);
+char * NXDN_Service_To_Str(uint8_t Flag);
 //added these
 void NXDN_decode_Prop(dsd_opts * opts, dsd_state * state, uint8_t * Message);
 void NXDN_decode_Alias(dsd_opts * opts, dsd_state * state, uint8_t * Message);

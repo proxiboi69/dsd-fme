@@ -797,6 +797,28 @@ ncursesPrinter (dsd_opts * opts, dsd_state * state)
     if (state->nxdn_rcn == 1) printw ("DFA ");
 
     printw ("\n");
+
+    //SITE_INFO, SRV_INFO
+    if (state->nxdn_svc_info != 0)
+    {
+      char item[40];
+      printw ("| Version: %d; Adjacent Sites: %d;\n| Services:", state->nxdn_version, state->nxdn_adj_sites);
+      int col = 11;
+      for (int i = 0; i < 12; i++)
+      {
+        if (!(state->nxdn_svc_info & (0x8000 >> i))) continue;
+        int len = snprintf (item, sizeof(item), " %s;", NXDN_Service_To_Str(i));
+        if (col + len > 78) //fence width
+        {
+          printw ("\n|");
+          col = 1;
+        }
+        printw ("%s", item);
+        col += len;
+      }
+      printw ("\n");
+    }
+
     printw ("| ");
     printw ("TGT: [%5d] ", state->nxdn_last_tg);
     printw ("SRC: [%5d] ", state->nxdn_last_rid);

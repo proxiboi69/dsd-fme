@@ -415,23 +415,9 @@ void nxdn_srv_info_handler (dsd_state * state, uint16_t svc_info)
   //Part 1-A Common Air Interface Ver.2.0
   //6.5.33. Service Information
   fprintf (stderr, "\n Services:");
-  //check each SIF 1-bit element
-  if (svc_info & 0x8000) fprintf (stderr, " Multi-Site;");
-  if (svc_info & 0x4000) fprintf (stderr, " Multi-System;");
-  if (svc_info & 0x2000) fprintf (stderr, " Location Registration;");
-  if (svc_info & 0x1000) fprintf (stderr, " Group Registration;");
-
-  if (svc_info & 0x800) fprintf (stderr, " Authentication;");
-  if (svc_info & 0x400) fprintf (stderr, " Composite Control Channel;");
-  if (svc_info & 0x200) fprintf (stderr, " Voice Call;");
-  if (svc_info & 0x100) fprintf (stderr, " Data Call;");
-
-  if (svc_info & 0x80) fprintf (stderr, " Short Data Call;");
-  if (svc_info & 0x40) fprintf (stderr, " Status Call & Remote Control;");
-  if (svc_info & 0x20) fprintf (stderr, " PSTN Network Connection;");
-  if (svc_info & 0x10) fprintf (stderr, " IP Network Connection;");
-
-  //last 4-bits are spares
+  //check each SIF 1-bit element, last 4-bits are spares
+  for (int i = 0; i < 12; i++)
+    if (svc_info & (0x8000 >> i)) fprintf (stderr, " %s;", NXDN_Service_To_Str(i));
 
 }
 
@@ -1261,6 +1247,7 @@ void NXDN_decode_srv_info(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   location_id = (uint32_t)ConvertBitIntoBytes(&Message[8], 24);
   svc_info    = (uint16_t)ConvertBitIntoBytes(&Message[32], 16);
   rst_info    = (uint32_t)ConvertBitIntoBytes(&Message[48], 24);
+  state->nxdn_svc_info = svc_info;
 
   fprintf (stderr, "%s", KYEL);
   fprintf (stderr, "\n Service Information - ");
@@ -1327,6 +1314,9 @@ void NXDN_decode_site_info(dsd_opts * opts, dsd_state * state, uint8_t * Message
   adj_alloc   = (uint8_t)ConvertBitIntoBytes(&Message[120], 4);
   channel1    = (uint16_t)ConvertBitIntoBytes(&Message[124], 10);
   channel2    = (uint16_t)ConvertBitIntoBytes(&Message[134], 10);
+  state->nxdn_svc_info  = svc_info;
+  state->nxdn_version   = version_num;
+  state->nxdn_adj_sites = adj_alloc;
 
   fprintf (stderr, "%s", KYEL);
   fprintf (stderr, "\n Location ID [%06X] CSC [%04X] SVC [%04X] RST [%06X] \n          CA [%06X] Version: %d; Adjacent Sites: %d; ",
@@ -3872,3 +3862,28 @@ int NXDN_Call_Timer_To_Seconds(uint8_t CallTimer)
   if (CallTimer <= 26) return 180 + (CallTimer - 12) * 30;
   return -1;
 } /* End NXDN_Call_Timer_To_Seconds() */
+
+//1-A Table 6.5-35: SIF1 to SIF12
+char * NXDN_Service_To_Str(uint8_t Flag)
+{
+  char * Ptr = NULL;
+
+  switch(Flag)
+  {
+    case 0:  Ptr = "Multi-Site";                   break;
+    case 1:  Ptr = "Multi-System";                 break;
+    case 2:  Ptr = "Location Registration";        break;
+    case 3:  Ptr = "Group Registration";           break;
+    case 4:  Ptr = "Authentication";               break;
+    case 5:  Ptr = "Composite Control Channel";    break;
+    case 6:  Ptr = "Voice Call";                   break;
+    case 7:  Ptr = "Data Call";                    break;
+    case 8:  Ptr = "Short Data Call";              break;
+    case 9:  Ptr = "Status Call & Remote Control"; break;
+    case 10: Ptr = "PSTN Network Connection";      break;
+    case 11: Ptr = "IP Network Connection";        break;
+    default: Ptr = "Spare";                        break;
+  }
+
+  return Ptr;
+} /* End NXDN_Service_To_Str() */

@@ -271,7 +271,10 @@
      state->nxdn_location_site_code = 0;
      state->nxdn_location_sys_code = 0;
      sprintf (state->nxdn_location_category, "%s", " ");
- 
+     state->nxdn_svc_info = 0;
+     state->nxdn_version = 0;
+     state->nxdn_adj_sites = 0;
+
      //channel access information
      state->nxdn_rcn = 0;
      state->nxdn_base_freq = 0;
@@ -1226,7 +1229,10 @@
    state->nxdn_location_site_code = 0;
    state->nxdn_location_sys_code = 0;
    sprintf (state->nxdn_location_category, "%s", " ");
- 
+   state->nxdn_svc_info = 0;
+   state->nxdn_version = 0;
+   state->nxdn_adj_sites = 0;
+
    //channel access information
    state->nxdn_rcn = 0;
    state->nxdn_base_freq = 0;
