@@ -882,7 +882,7 @@ typedef struct
 
   //trunking group and lcn freq list
   long int trunk_lcn_freq[26]; //max number on an EDACS system, should be enough on DMR too hopefully
-  long int trunk_chan_map[0xFFFF]; //NXDN - 10 bit; P25 - 16 bit; DMR up to 12 bit (standard TIII)
+  long int trunk_chan_map[0x10000]; //NXDN - 10 bit, DFA 16 bit; P25 - 16 bit; DMR up to 12 bit (standard TIII)
   groupinfo * group_array;
   unsigned int group_tally; //tally number of groups imported from CSV file for referencing later
   int lcn_freq_count;

@@ -503,12 +503,9 @@ void nxdn_ca_info_handler (dsd_state * state, uint32_t ca_info)
   UNUSED(spare);
 
   //set state variable here to tell us to use DFA or Channel Versions
-  if (RCN == 1)
-  {
-    state->nxdn_rcn = RCN;
-    state->nxdn_step = step;
-    state->nxdn_base_freq = base;
-  }
+  state->nxdn_rcn = RCN;
+  state->nxdn_step = step;
+  state->nxdn_base_freq = base;
 
 }
 
