@@ -796,8 +796,8 @@ void nxdn_cac(dsd_opts * opts, dsd_state * state, uint8_t * bits)
 			memcpy (second_message_buffer, cac_message_buffer+72, 72);
 			memset (cac_message_buffer+72, 0, sizeof(cac_message_buffer)-72);
 		}
-		NXDN_Elements_Content_decode(opts, state, 1, cac_message_buffer);
-		if (dual) NXDN_Elements_Content_decode(opts, state, 1, second_message_buffer);
+		NXDN_CAC_Content_decode(opts, state, cac_message_buffer);
+		if (dual) NXDN_CAC_Content_decode(opts, state, second_message_buffer);
 	}
 
 	if (opts->payload == 1)
