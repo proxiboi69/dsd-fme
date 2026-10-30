@@ -723,11 +723,17 @@ void decode_ars(dsd_opts * opts, dsd_state * state, uint8_t * input, int len)
 //WIP: Based on Denny's always brilliant reverse-engineering of GPS reports
 int nxdn_gps_report(dsd_opts * opts, dsd_state * state, uint8_t * input, int len, uint32_t src)
 {
-  if (len < 42) return 0;
+  uint8_t b[38];
+  memset (b, 0xFF, sizeof(b));
 
-  uint8_t b[42];
-  for (int i = 0; i < 42; i++)
+  //type[8] zero[8], record (type first): FULL 36 or SHORT 15 bytes, sans CRC32
+  uint8_t type = (uint8_t)convert_bits_into_output(input, 8);
+  int rec_len = type == 0 ? 36 : type == 1 ? 15 : 0;
+  if (rec_len == 0 || len - 4 < rec_len + 2) return 0;
+
+  for (int i = 0; i < rec_len + 2; i++)
     b[i] = (uint8_t)convert_bits_into_output(input+(i*8), 8);
+  if (b[1] != 0 || b[2] != type) return 0;
   #define LE16(o) ((uint16_t)(b[o] | (b[(o)+1] << 8)))
 
   //Latitude and Longitude: frac[15] hem[1], DDMM
@@ -744,23 +750,31 @@ int nxdn_gps_report(dsd_opts * opts, dsd_state * state, uint8_t * input, int len
 
   if (lat_degmin == 0 || lon_degmin == 0 || lat_decimal > 90.0 || lon_decimal > 180.0) return 0;
 
+  //Time UTC: LE32, sec[6] min[6] hour[5] from bit 8
+  uint32_t t = b[2] | (b[3] << 8) | (b[4] << 16) | ((uint32_t)b[5] << 24);
+  uint8_t hour   = (t >> 20) & 0x1F;
+  uint8_t minute = (t >> 14) & 0x3F;
+  uint8_t second = (t >> 8) & 0x3F;
+
+  uint8_t no_fix = b[8] & 1;
+
   //Date: year[7] month[4] day-1[5]
   uint16_t date = LE16(17);
   uint16_t year  = (date >> 9) + 2000;
   uint8_t  month = (date >> 5) & 0xF;
   uint8_t  day   = (date & 0x1F) + 1;
 
-  //Time
-  uint32_t time_bits = b[3] | (b[4] << 8) | (b[5] << 16);
-  uint8_t hour   = (time_bits >> 12) & 0x1F;
-  uint8_t minute = (time_bits >> 6) & 0x3F;
-
-  //Heading and Speed in tenths, FFFF unused
-  uint16_t heading_raw = LE16(23);
-  uint16_t speed_raw   = LE16(25);
-  uint16_t elev_raw    = LE16(27);
-  double heading = heading_raw == 0xFFFF ? 0 : (heading_raw & 0xFFF) / 10.0;
-  double speed   = speed_raw   == 0xFFFF ? 0 : (speed_raw & 0x3FFF) / 10.0; //knots or k/h
+  //FULL only, all ones = unused
+  uint16_t course_raw = LE16(23) & 0xFFF;            //tenths
+  uint16_t knots_raw  = (LE16(25) >> 4) & 0x3FF;     //integer, tenths in low nibble
+  uint16_t alt_raw    = LE16(27);                    //metres, sign and hundredths in b[21]
+  uint8_t  sats       = LE16(33) >> 10;
+  uint16_t hdop_raw   = LE16(35) & 0x3FF;            //tenths
+  double heading = course_raw == 0xFFF ? 0 : course_raw / 10.0;
+  double knots   = knots_raw == 0x3FF ? 0 : knots_raw + (LE16(25) & 0xF) / 10.0;
+  double speed   = knots * 1.852; //km/h
+  double alt     = alt_raw + (b[21] >> 1) / 100.0;
+  if (b[21] & 1) alt = -alt;
   #undef LE16
 
   char deg_glyph[4];
@@ -768,18 +782,21 @@ int nxdn_gps_report(dsd_opts * opts, dsd_state * state, uint8_t * input, int len
 
   //Report
   fprintf (stderr, "\n GPS: (%f%s, %f%s) ", latitude, deg_glyph, longitude, deg_glyph);
-  if (speed_raw != 0xFFFF)   fprintf (stderr, "Speed: %lf k/h; ", speed);
-  if (heading_raw != 0xFFFF) fprintf (stderr, "COG: %lf; ", heading);
-  if (elev_raw != 0xFFFF)    fprintf (stderr, "Elevation: %i; ", (int16_t)elev_raw);
+  if (no_fix)               fprintf (stderr, "No Fix; ");
+  if (knots_raw != 0x3FF)   fprintf (stderr, "Speed: %.1lf kn (%.1lf km/h); ", knots, speed);
+  if (course_raw != 0xFFF)  fprintf (stderr, "COG: %.1lf; ", heading);
+  if (alt_raw != 0xFFFF)    fprintf (stderr, "Altitude: %.2lf m; ", alt);
+  if (sats != 0x3F)         fprintf (stderr, "Satellites: %d; ", sats);
+  if (hdop_raw != 0x3FF)    fprintf (stderr, "HDOP: %.1lf; ", hdop_raw / 10.0);
   fprintf (stderr, "Date: %04d/%02d/%02d ", year, month, day);
-  fprintf (stderr, "Time: %02d:%02d ", hour, minute);
+  fprintf (stderr, "Time: %02d:%02d:%02d UTC ", hour, minute, second);
 
   //dump to event history
   sprintf (state->event_history_s[0].Event_History_Items[0].gps_s, "(%f%s, %f%s)", latitude, deg_glyph, longitude, deg_glyph);
   uint32_t source = state->dmr_lrrp_source[0];
   uint32_t target = state->dmr_lrrp_target[0];
   char comp_string[500]; memset (comp_string, 0, sizeof(comp_string));
-  sprintf (comp_string, "GPS SRC: %d; TGT: %d;", source, target);
+  sprintf (comp_string, "GPS SRC: %d; TGT: %d;%s", source, target, no_fix ? " No Fix;" : "");
   watchdog_event_datacall (opts, state, source, target, comp_string, 0);
 
   //save to LRRP report for mapping/logging
