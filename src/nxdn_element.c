@@ -3489,23 +3489,13 @@ int nxdn_dcall_data(dsd_opts * opts, dsd_state * state, int type, uint8_t * Mess
     {
       uint8_t opcode = (uint8_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0], 8);
       uint8_t nmea = (uint8_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0]+8, 8);
-      uint32_t reverse = (uint8_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0], 24); //observed 3 bytes of zeroes
       if (opcode == 0x06 && (nmea == '$' || nmea == '!')) //may only need to check one of the other
       {
         //Check NMEA Sentence
         fprintf (stderr, "\n ");
         nmea_sentence_checker(opts, state, state->dmr_pdu_sf[0]+8, 0, total_bytes);
       }
-      else if (reverse == 0)
-        nxdn_gps_report(opts, state, state->dmr_pdu_sf[0], total_bytes, state->dmr_lrrp_source[0]);
-      // else if (0 == 1) //future case
-      // {
-      //   uint8_t bytes[total_bytes];
-      //   memset(bytes, 0, sizeof(bytes));
-      //   for (int i = 0; i < total_bytes-4; i++)
-      //     bytes[i] = (uint8_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0]+(i*8), 8);
-      // }
-      else
+      else if (nxdn_gps_report(opts, state, state->dmr_pdu_sf[0], total_bytes, state->dmr_lrrp_source[0]) == 0)
       {
         //dump to event history as generic data call with no decode
         sprintf (state->event_history_s[0].Event_History_Items[0].text_message, "Unknown Data Call Format: %04X;", (uint16_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0], 16));
