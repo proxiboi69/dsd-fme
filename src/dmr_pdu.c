@@ -82,7 +82,7 @@ void utf8_to_text (dsd_state * state, uint8_t wr, uint16_t len, uint8_t * input)
     else fprintf (stderr, "-");
 
     
-    char c = input[i];
+    char c[2]; c[0] = (char)input[i]; c[1] = 0;
 
     //for now, just rip the first 40 or so chars lower byte value
     //in the ASCII Range (should be alright for a quick visual)
@@ -90,8 +90,8 @@ void utf8_to_text (dsd_state * state, uint8_t wr, uint16_t len, uint8_t * input)
     //   strcat (state->dmr_lrrp_gps[slot], &c);
 
     //this is the long version, complete message for logging purposes
-    if (wr == 1 && c < 0x7F && c >= 0x20)
-      strcat (state->event_history_s[slot].Event_History_Items[0].text_message, &c);
+    if (wr == 1 && input[i] < 0x7F && input[i] >= 0x20)
+      strcat (state->event_history_s[slot].Event_History_Items[0].text_message, c);
 
   }
 
