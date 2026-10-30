@@ -3495,6 +3495,19 @@ int nxdn_dcall_data(dsd_opts * opts, dsd_state * state, int type, uint8_t * Mess
         fprintf (stderr, "\n ");
         nmea_sentence_checker(opts, state, state->dmr_pdu_sf[0]+8, 0, total_bytes);
       }
+      //fmt[8] zero[8] text[n] CRC32[32]
+      else if ((opcode == 0x83 || opcode == 0x84) && total_bytes > 6)
+      {
+        uint8_t text[total_bytes];
+        for (int i = 0; i < total_bytes - 6; i++)
+          text[i] = (uint8_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0]+((i+2)*8), 8);
+        utf8_to_text (state, 1, total_bytes - 6, text);
+        uint32_t source = state->dmr_lrrp_source[0];
+        uint32_t target = state->dmr_lrrp_target[0];
+        char comp_string[500]; memset (comp_string, 0, sizeof(comp_string));
+        sprintf (comp_string, "Text Message SRC: %d; TGT: %d;", source, target);
+        watchdog_event_datacall (opts, state, source, target, comp_string, 0);
+      }
       else if (nxdn_gps_report(opts, state, state->dmr_pdu_sf[0], total_bytes, state->dmr_lrrp_source[0]) == 0)
       {
         //dump to event history as generic data call with no decode
