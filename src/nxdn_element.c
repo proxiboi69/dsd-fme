@@ -881,17 +881,15 @@ void NXDN_decode_Alias16(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   }
   else fprintf (stderr, " (%d/%d) ", seg_num, seg_len);
 
-  //copy to PDU superframe
-  memcpy(state->dmr_pdu_sf[0]+(seg_num-1)*seg_byte_num, seg_bytes, seg_byte_num*sizeof(uint8_t));
+  if (seg_num == 0 || seg_num > seg_len) return;
+
+  static uint8_t alias_buf[15*4];
+  memcpy(alias_buf+(seg_num-1)*seg_byte_num, seg_bytes, seg_byte_num*sizeof(uint8_t));
 
   int len = seg_byte_num * seg_len;
 
-  //TODO: Appears to have embedded 2 byte crc, populated up to 12 bits
-  //not a match (may need bitwise, or may need entire messages put together and not just alias)
-  // uint16_t crc_chk = crc12f(state->dmr_pdu_sf[0], 12);
-
-  //extract CRC
-  uint16_t crc_ext = (state->dmr_pdu_sf[0][len-2] << 8) | (state->dmr_pdu_sf[0][len-1] << 0);
+  //checksum: 16-bit sum of alias bytes, big endian
+  uint16_t crc_ext = (alias_buf[len-2] << 8) | (alias_buf[len-1] << 0);
 
   //remove CRC bytes
   if (len > 2)
@@ -899,11 +897,21 @@ void NXDN_decode_Alias16(dsd_opts * opts, dsd_state * state, uint8_t * Message)
 
   if (seg_num == seg_len)
   {
+    uint16_t crc_chk = 0;
+    for (int i = 0; i < len; i++)
+      crc_chk += alias_buf[i];
+    if (crc_chk != crc_ext)
+    {
+      fprintf (stderr, " Checksum ERR ");
+      memset(alias_buf, 0, sizeof(alias_buf));
+      return;
+    }
+
     if (opts->payload == 1)
     {
       fprintf (stderr, "\n Completed Alias Encoded: ");
       for (int i = 0; i < (seg_len*seg_byte_num); i++)
-        fprintf (stderr, "%02X", state->dmr_pdu_sf[0][i]);
+        fprintf (stderr, "%02X", alias_buf[i]);
     }
 
     //Alias String
@@ -924,8 +932,8 @@ void NXDN_decode_Alias16(dsd_opts * opts, dsd_state * state, uint8_t * Message)
     {
       
       uni  = 0;
-      utf8 = state->dmr_pdu_sf[0][k];
-      c16b = (state->dmr_pdu_sf[0][k+0] << 8) | state->dmr_pdu_sf[0][k+1];
+      utf8 = alias_buf[k];
+      c16b = (alias_buf[k+0] << 8) | alias_buf[k+1];
 
       if (utf8 >= 0x20 && utf8 < 0x80)
       {
@@ -941,7 +949,7 @@ void NXDN_decode_Alias16(dsd_opts * opts, dsd_state * state, uint8_t * Message)
         uni = sjis_char_to_unicode(c16b);
         #elif UTF16_DECODE //try as UTF16BE (untested through Unicode to UTF8 decoder)
         uni = c16b; //UTF16BE
-        // uni = (state->dmr_pdu_sf[0][k+1] << 8) | state->dmr_pdu_sf[0][k+0]; //UTF16LE (for test only)
+        // uni = (alias_buf[k+1] << 8) | alias_buf[k+0]; //UTF16LE (for test only)
         #endif
         fprintf (stderr, "%lc", uni);
         k+=2;
@@ -962,8 +970,7 @@ void NXDN_decode_Alias16(dsd_opts * opts, dsd_state * state, uint8_t * Message)
     sprintf (state->generic_talker_alias[0], "%s", alias);
     sprintf (state->event_history_s[0].Event_History_Items[0].alias, "%s; ", alias);
 
-    //reset PDU superframe afterwards
-    memset(state->dmr_pdu_sf[0], 0, sizeof(state->dmr_pdu_sf[0]));
+    memset(alias_buf, 0, sizeof(alias_buf));
   }
 
 } /* End NXDN_decode_Alias16 */
@@ -1032,15 +1039,38 @@ void NXDN_decode_Alias(dsd_opts * opts, dsd_state * state, uint8_t * Message)
   {
     fprintf (stderr, " (%d/%d) ", blocknumber, total);
 
+    if (blocknumber == 0 || blocknumber > total) return;
+
     blocknumber--;
     total--;
 
+    static uint8_t raw[7*4];
     int ptr = blocknumber*4;
 
     for (int i = 0; i < 4; i++)
-      state->generic_talker_alias[0][ptr++] = (char)ConvertBitIntoBytes(&Message[40+(i*8)], 8);
+    {
+      raw[ptr] = (uint8_t)ConvertBitIntoBytes(&Message[40+(i*8)], 8);
+      state->generic_talker_alias[0][ptr] = (char)raw[ptr];
+      ptr++;
+    }
 
-    //on block 4, the last two (14, and 15) will not be an alias value, but a CRC value (seemingly)
+    //checksum: 16-bit sum of alias bytes, big endian
+    if (blocknumber == total)
+    {
+      int len = (total+1)*4 - 2;
+      uint16_t crc_chk = 0;
+      for (int i = 0; i < len; i++)
+        crc_chk += raw[i];
+      if (crc_chk != ((raw[len] << 8) | raw[len+1]))
+      {
+        fprintf (stderr, " Checksum ERR ");
+        memset(raw, 0, sizeof(raw));
+        memset(state->generic_talker_alias[0], 0, sizeof(state->generic_talker_alias[0]));
+        sprintf (state->event_history_s[0].Event_History_Items[0].alias, "%s", "BUMBLEBEETUNA");
+        return;
+      }
+    }
+
     state->generic_talker_alias[0][14] = '\0';
     state->generic_talker_alias[0][15] = '\0';
 
@@ -2872,16 +2902,18 @@ void NXDN_decode_ALIAS_ARIB(dsd_opts * opts, dsd_state * state, uint8_t * Messag
   }
   else fprintf (stderr, " %d/%d; ", seg_num, seg_len);
 
-  //copy to PDU superframe
-  memcpy(state->dmr_pdu_sf[0]+(seg_num-1)*seg_byte_num, seg_bytes, seg_byte_num*sizeof(uint8_t));
+  if (seg_num == 0 || seg_num > seg_len) return;
+
+  static uint8_t alias_buf[15*6];
+  memcpy(alias_buf+(seg_num-1)*seg_byte_num, seg_bytes, seg_byte_num*sizeof(uint8_t));
 
   int len = seg_byte_num * seg_len;
 
   //TODO: Do a CRC32 Check, currently relying on each SACCH frame CRC instead
 
   //extract CRC32
-  uint32_t crc_ext = (state->dmr_pdu_sf[0][len-4] << 24) | (state->dmr_pdu_sf[0][len-3] << 16) | 
-                     (state->dmr_pdu_sf[0][len-2] <<  8) |  state->dmr_pdu_sf[0][len-1];
+  uint32_t crc_ext = (alias_buf[len-4] << 24) | (alias_buf[len-3] << 16) |
+                     (alias_buf[len-2] <<  8) |  alias_buf[len-1];
 
   //remove CRC32 bytes
   if (len > 4)
@@ -2893,7 +2925,7 @@ void NXDN_decode_ALIAS_ARIB(dsd_opts * opts, dsd_state * state, uint8_t * Messag
     {
       fprintf (stderr, "\n Completed Alias Encoded: ");
       for (int i = 0; i < (seg_len*seg_byte_num); i++)
-        fprintf (stderr, "%02X", state->dmr_pdu_sf[0][i]);
+        fprintf (stderr, "%02X", alias_buf[i]);
     }
 
     //Alias String
@@ -2914,8 +2946,8 @@ void NXDN_decode_ALIAS_ARIB(dsd_opts * opts, dsd_state * state, uint8_t * Messag
     {
       
       c16  = 0;
-      utf8 = state->dmr_pdu_sf[0][k];
-      sjis = (state->dmr_pdu_sf[0][k] << 8) | state->dmr_pdu_sf[0][k+1];
+      utf8 = alias_buf[k];
+      sjis = (alias_buf[k] << 8) | alias_buf[k+1];
 
       if (utf8 >= 0x20 && utf8 < 0x80)
       {
@@ -2945,8 +2977,7 @@ void NXDN_decode_ALIAS_ARIB(dsd_opts * opts, dsd_state * state, uint8_t * Messag
     sprintf (state->generic_talker_alias[0], "%s", alias);
     sprintf (state->event_history_s[0].Event_History_Items[0].alias, "%s; ", alias);
 
-    //reset PDU superframe afterwards
-    memset(state->dmr_pdu_sf[0], 0, sizeof(state->dmr_pdu_sf[0]));
+    memset(alias_buf, 0, sizeof(alias_buf));
   }
 
 } /* End NXDN_decode_ALIAS_ARIB() */
