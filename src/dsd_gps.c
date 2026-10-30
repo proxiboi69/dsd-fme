@@ -721,51 +721,56 @@ void decode_ars(dsd_opts * opts, dsd_state * state, uint8_t * input, int len)
 }
 
 //WIP: Based on Denny's always brilliant reverse-engineering of GPS reports
-void nxdn_gps_report(dsd_opts * opts, dsd_state * state, uint8_t * input, uint32_t src)
+int nxdn_gps_report(dsd_opts * opts, dsd_state * state, uint8_t * input, int len, uint32_t src)
 {
+  if (len < 42) return 0;
 
-  //Elevation
-  int16_t elevation  = (int16_t)convert_bits_into_output(input+56, 16);
+  uint8_t b[42];
+  for (int i = 0; i < 42; i++)
+    b[i] = (uint8_t)convert_bits_into_output(input+(i*8), 8);
+  #define LE16(o) ((uint16_t)(b[o] | (b[(o)+1] << 8)))
 
-  //Speed & Heading (in tenths)
-  uint16_t speed_raw   = (uint16_t)convert_bits_into_output(input+74, 14);
-  uint16_t heading_raw = (uint16_t)convert_bits_into_output(input+92, 12);
-  double speed   = speed_raw   / 10.0; //knots or k/h
-  double heading = heading_raw / 10.0;
-
-  //Date
-  uint16_t year  = (uint16_t)(convert_bits_into_output(input+136,7) + 2000);
-  uint8_t  month = (uint8_t) convert_bits_into_output(input+143,4);
-  uint8_t  day   = (uint8_t)(convert_bits_into_output(input+147,5) + 1);
-
-  //Longitude (DDMM.mmmm format)
-  uint16_t lon_degmin = (uint16_t)convert_bits_into_output(input+152, 16);
-  uint16_t lon_frac   = (uint16_t)convert_bits_into_output(input+16, 15);
-  uint8_t  lon_hem    = (uint8_t) convert_bits_into_output(input+183, 1);
-  double lon_minutes = (lon_degmin % 100) + (lon_frac / 10000.0);
-  double lon_decimal = (lon_degmin / 100) + (lon_minutes / 60.0);
-  double longitude = (lon_hem == 0) ? lon_decimal : -lon_decimal;
-
-  //Latitude (DDMM.mmmm format)
-  uint16_t lat_degmin = (uint16_t)convert_bits_into_output(input+184,16);
-  uint16_t lat_frac   = (uint16_t)convert_bits_into_output(input+200,15);
-  uint8_t  lat_hem    = (uint8_t) convert_bits_into_output(input+215,1);
-  double lat_minutes = (lat_degmin % 100) + (lat_frac / 10000.0);
+  //Latitude and Longitude: frac[15] hem[1], DDMM
+  uint16_t lat_frac   = LE16(9);
+  uint16_t lat_degmin = LE16(11);
+  uint16_t lon_frac   = LE16(13);
+  uint16_t lon_degmin = LE16(15);
+  double lat_minutes = (lat_degmin % 100) + ((lat_frac >> 1) / 10000.0);
   double lat_decimal = (lat_degmin / 100) + (lat_minutes / 60.0);
-  double latitude = (lat_hem == 0) ? lat_decimal : -lat_decimal;
+  double latitude = (lat_frac & 1) ? -lat_decimal : lat_decimal;
+  double lon_minutes = (lon_degmin % 100) + ((lon_frac >> 1) / 10000.0);
+  double lon_decimal = (lon_degmin / 100) + (lon_minutes / 60.0);
+  double longitude = (lon_frac & 1) ? -lon_decimal : lon_decimal;
+
+  if (lat_degmin == 0 || lon_degmin == 0 || lat_decimal > 90.0 || lon_decimal > 180.0) return 0;
+
+  //Date: year[7] month[4] day-1[5]
+  uint16_t date = LE16(17);
+  uint16_t year  = (date >> 9) + 2000;
+  uint8_t  month = (date >> 5) & 0xF;
+  uint8_t  day   = (date & 0x1F) + 1;
 
   //Time
-  uint8_t hour   = (uint8_t) convert_bits_into_output(input+247,5);
-  uint8_t minute = (uint8_t) convert_bits_into_output(input+252,6);
+  uint32_t time_bits = b[3] | (b[4] << 8) | (b[5] << 16);
+  uint8_t hour   = (time_bits >> 12) & 0x1F;
+  uint8_t minute = (time_bits >> 6) & 0x3F;
+
+  //Heading and Speed in tenths, FFFF unused
+  uint16_t heading_raw = LE16(23);
+  uint16_t speed_raw   = LE16(25);
+  uint16_t elev_raw    = LE16(27);
+  double heading = heading_raw == 0xFFFF ? 0 : (heading_raw & 0xFFF) / 10.0;
+  double speed   = speed_raw   == 0xFFFF ? 0 : (speed_raw & 0x3FFF) / 10.0; //knots or k/h
+  #undef LE16
 
   char deg_glyph[4];
   sprintf (deg_glyph, "%s", "°");
 
   //Report
   fprintf (stderr, "\n GPS: (%f%s, %f%s) ", latitude, deg_glyph, longitude, deg_glyph);
-  fprintf (stderr, "Speed: %lf k/h; ", speed);
-  fprintf (stderr, "COG: %lf; ", heading);
-  fprintf (stderr, "Elevation: %i; ", elevation);
+  if (speed_raw != 0xFFFF)   fprintf (stderr, "Speed: %lf k/h; ", speed);
+  if (heading_raw != 0xFFFF) fprintf (stderr, "COG: %lf; ", heading);
+  if (elev_raw != 0xFFFF)    fprintf (stderr, "Elevation: %i; ", (int16_t)elev_raw);
   fprintf (stderr, "Date: %04d/%02d/%02d ", year, month, day);
   fprintf (stderr, "Time: %02d:%02d ", hour, minute);
 
@@ -817,6 +822,7 @@ void nxdn_gps_report(dsd_opts * opts, dsd_state * state, uint8_t * input, uint32
   //reset source and target from PDU storage
   state->dmr_lrrp_source[0] = 0;
   state->dmr_lrrp_target[0] = 0;
+  return 1;
 }
 
 uint8_t nmea_sentence_checker(dsd_opts * opts, dsd_state * state, uint8_t * input, uint8_t slot, int len)

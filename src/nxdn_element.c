@@ -3466,33 +3466,7 @@ int nxdn_dcall_data(dsd_opts * opts, dsd_state * state, int type, uint8_t * Mess
         nmea_sentence_checker(opts, state, state->dmr_pdu_sf[0]+8, 0, total_bytes);
       }
       else if (reverse == 0)
-      {
-        //Reverse Bytes observed on location data (unknown format, AVL? Other GNSS?)
-        uint8_t reverse_bytes[total_bytes];
-        memset(reverse_bytes, 0, sizeof(reverse_bytes));
-
-        //reverse bytes
-        int k = total_bytes-1-4;
-        for (int i = 0; i < total_bytes-4; i++)
-        {
-          reverse_bytes[i] = (uint8_t)ConvertBitIntoBytes(state->dmr_pdu_sf[0]+(k*8), 8);
-          k--;
-        }
-
-        //Debug Data Dump
-        fprintf (stderr, "\n  REV: ");
-        for (int i = 0; i < total_bytes-7; i++) //sans the CRC and the leading zeroes
-          fprintf (stderr, "%02X", reverse_bytes[i]);
-
-        uint8_t reverse_byte_bits[total_bytes*8];
-        memset(reverse_byte_bits, 0, sizeof(reverse_byte_bits));
-        unpack_byte_array_into_bit_array(reverse_bytes, reverse_byte_bits, (total_bytes-4-4));
-
-        //GPS report on 0xFFFC? or is that just any odd Kenwood message?
-        if ((uint16_t)convert_bits_into_output(reverse_byte_bits, 16) == 0xFFFC)
-          nxdn_gps_report(opts, state, reverse_byte_bits+16, state->dmr_lrrp_source[0]);
-
-      }
+        nxdn_gps_report(opts, state, state->dmr_pdu_sf[0], total_bytes, state->dmr_lrrp_source[0]);
       // else if (0 == 1) //future case
       // {
       //   uint8_t bytes[total_bytes];
