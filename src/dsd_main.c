@@ -2370,6 +2370,14 @@
             state.keyloader = 0;
             //signal an aes key is loaded into each slot -- if no value presented, then this won't matter anyways
             state.aes_key_loaded[0] = state.aes_key_loaded[1] = 1;
+            //NXDN AES key
+            for (int i = 0; i < 8; i++)
+            {
+              state.aes_key[i+0]  = (state.K1 >> (56-(i*8))) & 0xFF;
+              state.aes_key[i+8]  = (state.K2 >> (56-(i*8))) & 0xFF;
+              state.aes_key[i+16] = (state.K3 >> (56-(i*8))) & 0xFF;
+              state.aes_key[i+24] = (state.K4 >> (56-(i*8))) & 0xFF;
+            }
            }
            break;
  
